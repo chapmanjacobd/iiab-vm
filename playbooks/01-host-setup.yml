@@ -140,6 +140,12 @@
         state: directory
         mode: "0755"
 
+    - name: Create certbot webroot directory
+      ansible.builtin.file:
+        path: /var/www/certbot
+        state: directory
+        mode: "0755"
+
     - name: Test nginx configuration
       ansible.builtin.command:
         cmd: nginx -t

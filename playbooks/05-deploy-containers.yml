@@ -7,9 +7,36 @@
     - ../vars/containers.yml
 
   tasks:
+    - name: Display deployment mode
+      ansible.builtin.debug:
+        msg: >
+          Deploying containers — volatile: {{ volatile }}, ram_image: {{ ram_image }}
+
+    - name: Validate volatile setting
+      ansible.builtin.assert:
+        that: volatile in ['no', 'yes', 'state']
+        fail_msg: "volatile must be 'no', 'yes', or 'state' (got: {{ volatile }})"
+
+    - name: Load images into RAM if needed
+      ansible.builtin.command:
+        cmd: "{{ playbook_dir }}/../scripts/ramfs-setup.sh load {{ item.edition }}"
+      loop: "{{ containers.values() | list }}"
+      loop_control:
+        label: "{{ item.edition }}"
+      when: >
+        item.ram_image | default(ram_image) | bool
+      changed_when: true
+      register: ramfs_load
+
+    - name: Display RAMFS load results
+      ansible.builtin.debug:
+        var: ramfs_load
+        verbosity: 1
+
     - name: Verify container images exist
       ansible.builtin.stat:
-        path: "/var/lib/machines/iiab-{{ item.edition }}.raw"
+        path: >-
+          {{ '/run/iiab-ramfs/iiab-' + item.edition + '.raw' if (item.ram_image | default(ram_image) | bool) else '/var/lib/machines/iiab-' + item.edition + '.raw' }}
       register: image_stats
       loop: "{{ containers.values() | list }}"
       loop_control:
@@ -18,25 +45,73 @@
     - name: Check for missing images
       ansible.builtin.fail:
         msg: >
-          Missing image: /var/lib/machines/iiab-{{ item.item.edition }}.raw
-          Run the corresponding build playbook first: playbooks/0{{ loop.index }}-build-{{ item.item.edition }}.yml
+          Missing image for {{ item.item.edition }}.
+          {% if (item.item.ram_image | default(ram_image) | bool) %}
+          Run: ./ramfs-setup.sh load {{ item.item.edition }}
+          {% else %}
+          Run: make build-{{ item.item.edition }}
+          {% endif %}
       when: not item.stat.exists
       loop: "{{ image_stats.results }}"
 
+    - name: Create container service files
+      ansible.builtin.command:
+        cmd: >
+          {{ playbook_dir }}/../scripts/container-service.sh
+          {{ item.edition }}
+          {{ item.ip }}
+          --volatile={{ item.volatile | default(volatile) }}
+          {% if (item.ram_image | default(ram_image) | bool) %}--ram-image{% endif %}
+      loop: "{{ containers.values() | list }}"
+      loop_control:
+        label: "{{ item.edition }}"
+      changed_when: true
+      register: service_results
+
+    - name: Display service setup info
+      ansible.builtin.debug:
+        var: service_results
+        verbosity: 1
+
+    - name: Stop existing containers (if running)
+      ansible.builtin.command:
+        cmd: "machinectl terminate iiab-{{ item.edition }}"
+      loop: "{{ containers.values() | list }}"
+      loop_control:
+        label: "{{ item.edition }}"
+      changed_when: true
+      failed_when: false
+
+    - name: Remove old machine registrations
+      ansible.builtin.command:
+        cmd: "machinectl remove iiab-{{ item.edition }}"
+      loop: "{{ containers.values() | list }}"
+      loop_control:
+        label: "{{ item.edition }}"
+      changed_when: true
+      failed_when: false
+
+    - name: Determine image path for import
+      ansible.builtin.set_fact:
+        image_paths: >-
+          {{ image_paths | default({}) | combine({ item.edition:
+            '/run/iiab-ramfs/iiab-' + item.edition + '.raw'
+            if (item.ram_image | default(ram_image) | bool)
+            else '/var/lib/machines/iiab-' + item.edition + '.raw'
+          }) }}
+      loop: "{{ containers.values() | list }}"
+      loop_control:
+        label: "{{ item.edition }}"
+
     - name: Import all container images
       ansible.builtin.command:
-        cmd: "machinectl import-raw /var/lib/machines/iiab-{{ item.edition }}.raw iiab-{{ item.edition }}"
+        cmd: "machinectl import-raw {{ image_paths[item.edition] }} iiab-{{ item.edition }}"
       loop: "{{ containers.values() | list }}"
       loop_control:
         label: "{{ item.edition }}"
       register: import_results
       changed_when: "'exists' not in import_results.stderr | default('')"
       failed_when: false
-
-    - name: Display import results
-      ansible.builtin.debug:
-        var: import_results
-        verbosity: 1
 
     - name: Start all containers
       ansible.builtin.command:
