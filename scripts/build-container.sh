@@ -65,29 +65,17 @@ echo "IP:       $IP"
 echo "RAM image: $RAM_IMAGE"
 echo "Local vars: ${LOCAL_VARS:-(none)}"
 
-# Determine local_vars path - prefer iiab repo, then fall back to old behavior
-if [ -z "$LOCAL_VARS" ]; then
-    # Try the iiab repo first
-    IIAB_REPO_PATH="/opt/iiab/iiab"
-    if [ -d "$IIAB_REPO_PATH" ]; then
-        LOCAL_VARS="${IIAB_REPO_PATH}/vars/local_vars_${EDITION}.yml"
-    else
-        # If iiab repo not available, check for a cloned/linked repo nearby
-        IIAB_REPO_PATH="${PROJECT_DIR}/../iiab"
-        if [ -d "$IIAB_REPO_PATH" ]; then
-            LOCAL_VARS="${IIAB_REPO_PATH}/vars/local_vars_${EDITION}.yml"
-        fi
-    fi
-fi
-
-# Resolve to absolute path if relative
-if [[ "$LOCAL_VARS" != /* ]]; then
-    LOCAL_VARS="${PROJECT_DIR}/${LOCAL_VARS}"
-fi
-
-if [ ! -f "$LOCAL_VARS" ]; then
-    echo "Warning: local_vars not found at $LOCAL_VARS, using defaults" >&2
-    LOCAL_VARS=""
+# local_vars path is relative to the IIAB repo (will be resolved after clone/copy)
+# If absolute path provided, use as-is
+if [[ "$LOCAL_VARS" != /* ]] && [ -n "$LOCAL_VARS" ]; then
+    # Relative path - will be resolved relative to IIAB repo in container
+    IIAB_VARS_PATH="$LOCAL_VARS"
+elif [ -z "$LOCAL_VARS" ]; then
+    # Default to edition-based path in IIAB repo
+    IIAB_VARS_PATH="vars/local_vars_${EDITION}.yml"
+else
+    # Absolute path - use directly
+    IIAB_VARS_PATH=""
 fi
 
 # Step 1: Mount Debian image
@@ -145,14 +133,35 @@ fi
 
 # Install IIAB configuration
 mkdir -p "$MOUNT_DIR/etc/iiab"
-if [ -f "$LOCAL_VARS" ]; then
+
+# Copy local_vars from the cloned IIAB repo in the container
+VARS_COPIED=false
+if [ -n "$IIAB_VARS_PATH" ]; then
+    CONTAINER_VARS_FILE="$MOUNT_DIR/opt/iiab/iiab/$IIAB_VARS_PATH"
+    if [ -f "$CONTAINER_VARS_FILE" ]; then
+        echo "Copying local_vars from IIAB repo: $IIAB_VARS_PATH"
+        cp --preserve=mode,timestamps "$CONTAINER_VARS_FILE" "$MOUNT_DIR/etc/iiab/local_vars.yml"
+        VARS_COPIED=true
+    else
+        echo "Error: local_vars not found at $IIAB_VARS_PATH in IIAB repo" >&2
+        echo "  Expected: $CONTAINER_VARS_FILE" >&2
+        echo "  Check that the file exists in this branch/ref of $IIAB_REPO" >&2
+        exit 1
+    fi
+fi
+
+if ! $VARS_COPIED && [ -n "$LOCAL_VARS" ] && [[ "$LOCAL_VARS" == /* ]] && [ -f "$LOCAL_VARS" ]; then
+    # Fallback: use absolute path from host if provided and exists
+    echo "Using local_vars from host: $LOCAL_VARS"
     cp --preserve=mode,timestamps "$LOCAL_VARS" "$MOUNT_DIR/etc/iiab/local_vars.yml"
-else
-    # Create minimal config
-    cat > "$MOUNT_DIR/etc/iiab/local_vars.yml" << YAML
-# Auto-generated for demo: $NAME
-edition: $EDITION
-YAML
+    VARS_COPIED=true
+fi
+
+if ! $VARS_COPIED; then
+    echo "Error: No valid local_vars file found" >&2
+    echo "  Tried: $IIAB_VARS_PATH (in IIAB repo)" >&2
+    echo "  Specify --local-vars with a path relative to the IIAB repo" >&2
+    exit 1
 fi
 
 # Disable RPi-specific settings

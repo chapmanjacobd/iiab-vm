@@ -16,13 +16,6 @@ Demo server infrastructure for Internet-in-a-Box (IIAB) with subdomain-based con
 
 - Debian 13 (amd64) host with root access
 - Wildcard DNS `*.iiab.io` → server IP
-- IIAB repository cloned at `/opt/iiab/iiab` (or set `IIAB_REPO_PATH` env var)
-
-```bash
-# Clone IIAB repository if not already present
-sudo mkdir -p /opt/iiab
-sudo git clone https://github.com/iiab/iiab.git /opt/iiab/iiab
-```
 
 ### 1. Initialize the host
 
@@ -120,22 +113,22 @@ democtl add production \
 
 ```bash
 # demos.sh - declarative demo definitions
-# Uses local_vars from the IIAB repo (IIAB_REPO_PATH defaults to /opt/iiab/iiab)
+# local_vars paths are relative to the IIAB repo cloned into each container
 
 demo add small \
   --edition small --branch master --size 12000 \
   --volatile state --ram-image \
-  --local-vars ${IIAB_REPO_PATH}/vars/local_vars_small.yml
+  --local-vars vars/local_vars_small.yml
 
 demo add medium \
   --edition medium --branch master --size 20000 \
   --volatile state --ram-image \
-  --local-vars ${IIAB_REPO_PATH}/vars/local_vars_medium.yml
+  --local-vars vars/local_vars_medium.yml
 
 demo add large \
   --edition large --branch master --size 30000 \
   --volatile state --ram-image --fallback \
-  --local-vars ${IIAB_REPO_PATH}/vars/local_vars_large.yml
+  --local-vars vars/local_vars_large.yml
 ```
 
 Run `democtl apply demos.sh` to ensure these are all running. Add or remove demos in the file, then re-apply.
@@ -158,7 +151,7 @@ iiab-whitelabel/
     └── nginx-gen.sh           # Dynamic nginx from active demos
 ```
 
-**Note**: The `vars/` directory has been removed. This repo now uses the `local_vars_*.yml` files from the cloned IIAB repo at `/opt/iiab/iiab` (or wherever `IIAB_REPO_PATH` points).
+**Note**: The `vars/` directory has been removed. Each demo uses `local_vars_*.yml` files from the IIAB repo that gets cloned into the container during build. This ensures the vars match the specific branch/PR being tested.
 
 ## Deployment Modes
 
