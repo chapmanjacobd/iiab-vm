@@ -8,7 +8,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-NSPAWN_DIR="${PROJECT_DIR}/nspawn-loop"
 
 # Defaults
 NAME=""
@@ -20,6 +19,8 @@ VOLATILE="state"
 IP=""
 RAM_IMAGE=false
 LOCAL_VARS=""
+NSPAWN_DIR=""
+IMAGE_SOURCE=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -33,12 +34,24 @@ while [[ $# -gt 0 ]]; do
         --ip)         IP="$2"; shift 2 ;;
         --ram-image)  RAM_IMAGE=true; shift ;;
         --local-vars) LOCAL_VARS="$2"; shift 2 ;;
+        --nspawn-dir) NSPAWN_DIR="$2"; shift 2 ;;
+        --image-source) IMAGE_SOURCE="$2"; shift 2 ;;
         *)
             echo "Warning: Unknown option: $1" >&2
             shift
             ;;
     esac
 done
+
+# Resolve NSPAWN_DIR
+if [ -z "$NSPAWN_DIR" ]; then
+    NSPAWN_DIR="${PROJECT_DIR}/nspawn-loop"
+fi
+
+if [ ! -d "$NSPAWN_DIR" ]; then
+    echo "Error: nspawn-loop directory not found: $NSPAWN_DIR" >&2
+    exit 1
+fi
 
 # Validate required args
 if [ -z "$NAME" ]; then

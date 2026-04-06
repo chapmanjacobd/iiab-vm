@@ -41,16 +41,8 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
-# Determine image path
-if $RAM_IMAGE; then
-    IMAGE_PATH="/run/iiab-ramfs/${NAME}.raw"
-else
-    IMAGE_PATH="/var/lib/machines/${NAME}.raw"
-fi
-
-if [ ! -f "$IMAGE_PATH" ]; then
-    echo "Warning: Image not found at $IMAGE_PATH (may be created later)" >&2
-fi
+# Determine image path (always /var/lib/machines/ for the nspawn service)
+IMAGE_PATH="/var/lib/machines/${NAME}.raw"
 
 # Create nspawn settings directory
 SETTINGS_DIR="/etc/systemd/nspawn"
@@ -81,7 +73,6 @@ ${FILES_SECTION}
 EOF
 
 echo "Created ${SETTINGS_DIR}/${NAME}.nspawn"
-echo "  Image:     ${IMAGE_PATH}"
 echo "  IP:        ${IP}"
 echo "  Volatile:  ${VOLATILE}"
 echo "  RAM image: ${RAM_IMAGE}"

@@ -178,6 +178,8 @@ allocate_resources() {
     load_resources
     if $ram_image; then
         RAM_ALLOCATED=$(( RAM_ALLOCATED + size_mb ))
+    else
+        DISK_ALLOCATED=$(( DISK_ALLOCATED + size_mb ))
     fi
     save_resources
 }
@@ -202,6 +204,11 @@ free_resources() {
             RAM_ALLOCATED=$(( RAM_ALLOCATED - size_mb ))
             if [ "$RAM_ALLOCATED" -lt 0 ]; then
                 RAM_ALLOCATED=0
+            fi
+        else
+            DISK_ALLOCATED=$(( DISK_ALLOCATED - size_mb ))
+            if [ "$DISK_ALLOCATED" -lt 0 ]; then
+                DISK_ALLOCATED=0
             fi
         fi
         save_resources
@@ -365,28 +372,28 @@ build_demo() {
     local ip
     ip=$(cat "$demo_dir/ip")
 
-    # Ensure nspawn-loop is available
-    if [ ! -d "$NSPAWN_DIR" ]; then
-        log_demo "$name" "Cloning nspawn-loop..."
-        mkdir -p "$STATE_DIR"
-        git clone --depth 1 https://github.com/chapmanjacobd/nspawn-loop.git "$NSPAWN_DIR" 2>&1 || {
-            log_demo "$name" "Failed to clone nspawn-loop"
-            echo "failed" > "$demo_dir/status"
-            return 1
-        }
-    fi
+    # Ensure nspawn-loop is available (with lock for concurrent builds)
+    (
+        acquire_lock 600  # Wait up to 10 mins for initial clone if needed
+        if [ ! -d "$NSPAWN_DIR" ]; then
+            log_demo "$name" "Cloning nspawn-loop..."
+            mkdir -p "$STATE_DIR"
+            git clone --depth 1 https://github.com/chapmanjacobd/nspawn-loop.git "$NSPAWN_DIR" 2>&1
+        fi
+    )
 
-    # Ensure nspawn-loop scripts are accessible
-    if [ ! -d "$SCRIPT_DIR" ] && [ -d "$NSPAWN_DIR" ]; then
-        # If our scripts dir doesn't exist, use nspawn-loop directly
-        log_demo "$name" "Using nspawn-loop at $NSPAWN_DIR"
+    if [ ! -d "$NSPAWN_DIR" ]; then
+        log_demo "$name" "Error: nspawn-loop not found at $NSPAWN_DIR"
+        echo "failed" > "$demo_dir/status"
+        return 1
     fi
 
     # Build the container image using build-container.sh
     local build_script="${SCRIPT_DIR}/build-container.sh"
     if [ ! -x "$build_script" ]; then
-        log_demo "$name" "build-container.sh not found at $build_script, trying nspawn-loop..."
-        build_script="${NSPAWN_DIR}/build-container.sh"
+        log_demo "$name" "Error: build-container.sh not found at $build_script"
+        echo "failed" > "$demo_dir/status"
+        return 1
     fi
 
     local build_args=(
@@ -397,6 +404,7 @@ build_demo() {
         "--size" "$IMAGE_SIZE_MB"
         "--volatile" "$VOLATILE"
         "--ip" "$ip"
+        "--nspawn-dir" "$NSPAWN_DIR"
     )
 
     if [ "$RAM_IMAGE" = "true" ]; then
@@ -439,10 +447,12 @@ build_demo() {
         bash "$service_script" "${svc_args[@]}"
     fi
 
-    # Import and start with machinectl
+    # Register and start with systemd
     local image_path
     if [ "$RAM_IMAGE" = "true" ] && [ -f "/run/iiab-ramfs/${name}.raw" ]; then
         image_path="/run/iiab-ramfs/${name}.raw"
+        # For systemd-nspawn@.service to find it, symlink to /var/lib/machines
+        ln -sf "$image_path" "/var/lib/machines/${name}.raw"
     else
         image_path="/var/lib/machines/${name}.raw"
     fi
@@ -453,12 +463,9 @@ build_demo() {
         return 1
     fi
 
-    log_demo "$name" "Importing image..."
-    machinectl remove "$name" 2>/dev/null || true
-    machinectl import-raw "$image_path" "$name" 2>&1 || true
-
-    log_demo "$name" "Starting container..."
-    machinectl start "$name"
+    log_demo "$name" "Starting container via systemd-nspawn@${name}.service..."
+    systemctl daemon-reload
+    systemctl enable --now "systemd-nspawn@${name}.service"
 
     # Regenerate nginx
     log_demo "$name" "Updating nginx configuration..."
@@ -486,8 +493,8 @@ cmd_remove() {
     echo "Removing demo '$name'..."
 
     # Stop container
-    machinectl terminate "$name" 2>/dev/null || true
-    machinectl remove "$name" 2>/dev/null || true
+    systemctl stop "systemd-nspawn@${name}.service" 2>/dev/null || true
+    systemctl disable "systemd-nspawn@${name}.service" 2>/dev/null || true
 
     # Kill any running build
     if [ -f "$demo_dir/build.pid" ]; then
@@ -509,7 +516,7 @@ cmd_remove() {
         bash "$SCRIPT_DIR/ramfs-setup.sh" unload "$name" 2>/dev/null || true
     fi
 
-    # Remove image
+    # Remove image and symlinks
     rm -f "/var/lib/machines/${name}.raw"
     rm -f "/run/iiab-ramfs/${name}.raw"
 
@@ -525,6 +532,9 @@ cmd_remove() {
     trap - EXIT
 
     echo "Demo '$name' removed."
+
+    # Reload systemd
+    systemctl daemon-reload
 
     # Regenerate nginx
     if [ -x "$SCRIPT_DIR/nginx-gen.sh" ]; then
@@ -655,7 +665,7 @@ cmd_status() {
 
     if [ "$status" = "running" ]; then
         echo ""
-        machinectl status "$name" 2>/dev/null || echo "Container not running"
+        systemctl status "systemd-nspawn@${name}.service" --no-pager || true
     fi
 
     if [ "$status" = "building" ] && [ -f "$demo_dir/build.pid" ]; then
@@ -688,7 +698,7 @@ cmd_logs() {
     status=$(cat "$demo_dir/status" 2>/dev/null || echo "unknown")
 
     if [ "$status" = "running" ]; then
-        machinectl status "$name" 2>/dev/null || echo "Container not running"
+        journalctl -u "systemd-nspawn@${name}.service" -e --no-pager
     elif [ -f "$demo_dir/build.log" ]; then
         echo "=== Build log for '$name' ==="
         tail -100 "$demo_dir/build.log"
@@ -709,7 +719,8 @@ cmd_shell() {
         return 1
     fi
 
-    machinectl shell "$name"
+    # Use systemd-run for shell, as machinectl shell is essentially a wrapper around it
+    systemd-run -it --machine="$name" /bin/bash
 }
 
 ###############################################################################

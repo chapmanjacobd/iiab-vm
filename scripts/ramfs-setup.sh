@@ -11,7 +11,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 ACTION="${1:?Error: Action required (load, unload, status, cleanup)}"
-EDITION="${2:-}"
+NAME="${2:-}"
 RAMFS_ROOT="/run/iiab-ramfs"
 
 # Flock for concurrent safety on tmpfs operations
@@ -33,13 +33,10 @@ release_ramfs_lock() {
 
 trap release_ramfs_lock EXIT
 
-# Default image sizes for estimating tmpfs requirements
-declare -A IMAGE_SIZES=( [small]=12000 [medium]=20000 [large]=30000 )
-
 load_image() {
-    local edition="$1"
-    local src="/var/lib/machines/iiab-${edition}.raw"
-    local dest="${RAMFS_ROOT}/iiab-${edition}.raw"
+    local name="$1"
+    local src="/var/lib/machines/${name}.raw"
+    local dest="${RAMFS_ROOT}/${name}.raw"
 
     if [ ! -f "$src" ]; then
         echo "Error: Source image not found: $src" >&2
@@ -51,17 +48,10 @@ load_image() {
     # Create RAMFS root if needed
     if ! mountpoint -q "$RAMFS_ROOT" 2>/dev/null; then
         mkdir -p "$RAMFS_ROOT"
-        # Calculate total size needed for all images
-        local total_mb=0
-        for e in small medium large; do
-            if [ -f "/var/lib/machines/iiab-${e}.raw" ]; then
-                local img_mb
-                img_mb=$(du -m "/var/lib/machines/iiab-${e}.raw" | cut -f1)
-                total_mb=$((total_mb + img_mb))
-            fi
-        done
-        # Add 20% headroom
-        local size_mb=$(( (total_mb * 12) / 10 ))
+        # Calculate size needed for this image + some buffer
+        local img_mb
+        img_mb=$(du -m "$src" | cut -f1)
+        local size_mb=$(( (img_mb * 11) / 10 )) # 10% headroom
         echo "Mounting tmpfs at $RAMFS_ROOT (${size_mb}MB)..."
         mount -t tmpfs -o "size=${size_mb}M,mode=0755" tmpfs "$RAMFS_ROOT"
     fi
@@ -73,7 +63,7 @@ load_image() {
 
     local img_size_mb
     img_size_mb=$(du -m "$src" | cut -f1)
-    echo "Loading iiab-${edition}.raw into RAM (${img_size_mb}MB)..."
+    echo "Loading ${name}.raw into RAM (${img_size_mb}MB)..."
 
     # Check available RAM
     local avail_mb
@@ -83,23 +73,31 @@ load_image() {
         exit 1
     fi
 
+    # If already mounted but too small, remount to grow
+    local current_size
+    current_size=$(df -m "$RAMFS_ROOT" | awk 'NR==2 {print $2}')
+    local needed=$(( img_size_mb + 100 )) # Small buffer
+    if [ "$needed" -gt "$current_size" ]; then
+        mount -o "remount,size=${needed}M" "$RAMFS_ROOT"
+    fi
+
     cp --reflink=auto "$src" "$dest"
     chmod 0644 "$dest"
     echo "Loaded: $dest"
 }
 
 unload_image() {
-    local edition="$1"
-    local dest="${RAMFS_ROOT}/iiab-${edition}.raw"
+    local name="$1"
+    local dest="${RAMFS_ROOT}/${name}.raw"
 
     acquire_ramfs_lock
 
     if [ -f "$dest" ]; then
         echo "Removing $dest from RAM..."
         rm -f "$dest"
-        echo "Unloaded: iiab-${edition}"
+        echo "Unloaded: ${name}"
     else
-        echo "Image not in RAM: iiab-${edition}"
+        echo "Image not in RAM: ${name}"
     fi
 
     # If no images remain, unmount the tmpfs
@@ -145,25 +143,21 @@ cleanup() {
 
 case "$ACTION" in
     load)
-        if [ -z "$EDITION" ]; then
-            echo "Loading all available images into RAM..."
-            for e in small medium large; do
-                if [ -f "/var/lib/machines/iiab-${e}.raw" ]; then
-                    load_image "$e"
-                fi
-            done
-        else
-            load_image "$EDITION"
+        if [ -z "$NAME" ]; then
+            echo "Error: demo name required for load" >&2
+            exit 1
         fi
+        load_image "$NAME"
         ;;
     unload)
-        if [ -z "$EDITION" ]; then
+        if [ -z "$NAME" ]; then
             echo "Unloading all images from RAM..."
-            for e in small medium large; do
-                unload_image "$e"
+            find "$RAMFS_ROOT" -name '*.raw' -type f 2>/dev/null | while read -r img; do
+                n=$(basename "$img" .raw)
+                unload_image "$n"
             done
         else
-            unload_image "$EDITION"
+            unload_image "$NAME"
         fi
         ;;
     status)
@@ -173,7 +167,7 @@ case "$ACTION" in
         cleanup
         ;;
     *)
-        echo "Usage: $0 {load|unload|status|cleanup} [edition]" >&2
+        echo "Usage: $0 {load|unload|status|cleanup} [name]" >&2
         exit 1
         ;;
 esac

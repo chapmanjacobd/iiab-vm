@@ -64,8 +64,8 @@ EOF
 
     # HTTP server - ACME challenges + redirect
     cat << EOF
-# HTTP server - serve ACME challenges + redirect to HTTPS
-server {
+    # HTTP server - serve ACME challenges + conditional redirect to HTTPS
+    server {
     listen 80 default_server;
     listen [::]:80 default_server;
     server_name ${all_server_names};
@@ -75,12 +75,45 @@ server {
     }
 
     location / {
-        return 301 https://\$host\$request_uri;
-    }
-}
+    EOF
 
-# HTTP catch-all for other *.iiab.io
-server {
+    for name in "${demo_names[@]}"; do
+        # shellcheck source=/dev/null
+        source "$ACTIVE_DIR/$name/config"
+        subdomain="${SUBDOMAIN:-$name}"
+        cert_path="/etc/letsencrypt/live/${subdomain}.iiab.io/fullchain.pem"
+        upstream_name=$(echo "$name" | tr '-' '_')
+
+        if [ -f "$cert_path" ]; then
+            cat << EOF
+        if (\$host = "${subdomain}.iiab.io") {
+            return 301 https://\$host\$request_uri;
+        }
+    EOF
+        else
+            cat << EOF
+        if (\$host = "${subdomain}.iiab.io") {
+            proxy_pass http://${upstream_name};
+            proxy_set_header Host \$host;
+            proxy_set_header X-Real-IP \$remote_addr;
+            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$scheme;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade \$http_upgrade;
+            proxy_set_header Connection "upgrade";
+        }
+    EOF
+        fi
+    done
+
+    cat << EOF
+
+        return 404;
+    }
+    }
+
+    # HTTP catch-all for other *.iiab.io
+    server {
     listen 80;
     listen [::]:80;
     server_name *.iiab.io;
@@ -89,10 +122,12 @@ server {
         root ${CERTBOT_ROOT};
     }
 
-    return 302 https://${fallback_domain}\$request_uri;
-}
+    location / {
+        return 302 https://${fallback_domain}\$request_uri;
+    }
+    }
 
-EOF
+    EOF
 
     # HTTPS server blocks for each demo
     for name in "${demo_names[@]}"; do
@@ -100,15 +135,17 @@ EOF
         source "$ACTIVE_DIR/$name/config"
         subdomain="${SUBDOMAIN:-$name}"
         upstream_name=$(echo "$name" | tr '-' '_')
+        cert_path="/etc/letsencrypt/live/${subdomain}.iiab.io/fullchain.pem"
 
-        cat << EOF
+        if [ -f "$cert_path" ]; then
+            cat << EOF
 # HTTPS server for ${subdomain}.iiab.io
 server {
     listen 443 ssl http2;
     listen [::]:443 ssl http2;
     server_name ${subdomain}.iiab.io;
 
-    ssl_certificate /etc/letsencrypt/live/${subdomain}.iiab.io/fullchain.pem;
+    ssl_certificate ${cert_path};
     ssl_certificate_key /etc/letsencrypt/live/${subdomain}.iiab.io/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_stapling on;
@@ -128,23 +165,32 @@ server {
 }
 
 EOF
+        else
+            cat << EOF
+# HTTPS server for ${subdomain}.iiab.io (DISABLED - certificate not found)
+# Run 'democtl certbot' to obtain certificates
+EOF
+        fi
     done
 
     # Fallback server
-    cat << EOF
+    fallback_cert="/etc/letsencrypt/live/${fallback_domain}/fullchain.pem"
+    if [ -f "$fallback_cert" ]; then
+        cat << EOF
 # Catch-all for any other *.iiab.io subdomains
 server {
     listen 443 ssl http2 default_server;
     listen [::]:443 ssl http2 default_server;
     server_name *.iiab.io;
 
-    ssl_certificate /etc/letsencrypt/live/${fallback_domain}/fullchain.pem;
+    ssl_certificate ${fallback_cert};
     ssl_certificate_key /etc/letsencrypt/live/${fallback_domain}/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
 
     return 302 https://${fallback_domain}\$request_uri;
 }
 EOF
+    fi
 }
 
 generate_nginx > "$NGINX_CONF"
