@@ -65,9 +65,19 @@ echo "IP:       $IP"
 echo "RAM image: $RAM_IMAGE"
 echo "Local vars: ${LOCAL_VARS:-(none)}"
 
-# Determine local_vars path
+# Determine local_vars path - prefer iiab repo, then fall back to old behavior
 if [ -z "$LOCAL_VARS" ]; then
-    LOCAL_VARS="${PROJECT_DIR}/vars/local_vars_${EDITION}.yml"
+    # Try the iiab repo first
+    IIAB_REPO_PATH="/opt/iiab/iiab"
+    if [ -d "$IIAB_REPO_PATH" ]; then
+        LOCAL_VARS="${IIAB_REPO_PATH}/vars/local_vars_${EDITION}.yml"
+    else
+        # If iiab repo not available, check for a cloned/linked repo nearby
+        IIAB_REPO_PATH="${PROJECT_DIR}/../iiab"
+        if [ -d "$IIAB_REPO_PATH" ]; then
+            LOCAL_VARS="${IIAB_REPO_PATH}/vars/local_vars_${EDITION}.yml"
+        fi
+    fi
 fi
 
 # Resolve to absolute path if relative

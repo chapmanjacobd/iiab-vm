@@ -16,6 +16,13 @@ Demo server infrastructure for Internet-in-a-Box (IIAB) with subdomain-based con
 
 - Debian 13 (amd64) host with root access
 - Wildcard DNS `*.iiab.io` → server IP
+- IIAB repository cloned at `/opt/iiab/iiab` (or set `IIAB_REPO_PATH` env var)
+
+```bash
+# Clone IIAB repository if not already present
+sudo mkdir -p /opt/iiab
+sudo git clone https://github.com/iiab/iiab.git /opt/iiab/iiab
+```
 
 ### 1. Initialize the host
 
@@ -113,20 +120,22 @@ democtl add production \
 
 ```bash
 # demos.sh - declarative demo definitions
+# Uses local_vars from the IIAB repo (IIAB_REPO_PATH defaults to /opt/iiab/iiab)
+
 demo add small \
   --edition small --branch master --size 12000 \
   --volatile state --ram-image \
-  --local-vars vars/local_vars_small.yml
+  --local-vars ${IIAB_REPO_PATH}/vars/local_vars_small.yml
 
 demo add medium \
   --edition medium --branch master --size 20000 \
   --volatile state --ram-image \
-  --local-vars vars/local_vars_medium.yml
+  --local-vars ${IIAB_REPO_PATH}/vars/local_vars_medium.yml
 
 demo add large \
   --edition large --branch master --size 30000 \
   --volatile state --ram-image --fallback \
-  --local-vars vars/local_vars_large.yml
+  --local-vars ${IIAB_REPO_PATH}/vars/local_vars_large.yml
 ```
 
 Run `democtl apply demos.sh` to ensure these are all running. Add or remove demos in the file, then re-apply.
@@ -140,19 +149,16 @@ iiab-whitelabel/
 ├── Makefile                   # Thin wrapper around democtl
 ├── README.md
 ├── .gitignore
-├── playbooks/
-│   ├── 01-host-setup.yml      # Host provisioning (called by democtl init)
-│   └── 06-certbot.yml         # SSL certs (called by democtl certbot)
-├── scripts/
-│   ├── build-container.sh     # Build IIAB inside nspawn (arbitrary repo/branch)
-│   ├── container-service.sh   # Create .nspawn systemd config
-│   ├── ramfs-setup.sh         # Manage tmpfs image loading
-│   └── nginx-gen.sh           # Dynamic nginx from active demos
-└── vars/
-    ├── local_vars_small.yml
-    ├── local_vars_medium.yml
-    └── local_vars_large.yml
+└── scripts/
+    ├── build-container.sh     # Build IIAB inside nspawn (arbitrary repo/branch)
+    ├── container-service.sh   # Create .nspawn systemd config
+    ├── host-setup.sh          # Idempotent host provisioning (replaces Ansible)
+    ├── certbot-setup.sh       # Idempotent SSL certificate setup (replaces Ansible)
+    ├── ramfs-setup.sh         # Manage tmpfs image loading
+    └── nginx-gen.sh           # Dynamic nginx from active demos
 ```
+
+**Note**: The `vars/` directory has been removed. This repo now uses the `local_vars_*.yml` files from the cloned IIAB repo at `/opt/iiab/iiab` (or wherever `IIAB_REPO_PATH` points).
 
 ## Deployment Modes
 

@@ -18,8 +18,7 @@ DISK_BUFFER=2000  # Extra MB buffer per non-ram-image demo
 RAM_BUFFER=512    # Extra MB buffer per ram-image demo
 
 NSPAWN_DIR="${STATE_DIR}/nspawn-loop"
-SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts"
-PLAYBOOKS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/playbooks"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts"
 
 ###############################################################################
 # Flock-based resource protection
@@ -215,39 +214,17 @@ free_resources() {
 cmd_init() {
     ensure_root "$@"
     echo "=== Initializing IIAB demo server host ==="
-    if [ -f "$PLAYBOOKS_DIR/01-host-setup.yml" ]; then
-        ansible-playbook "$PLAYBOOKS_DIR/01-host-setup.yml"
+    if [ -f "$SCRIPT_DIR/host-setup.sh" ]; then
+        bash "$SCRIPT_DIR/host-setup.sh"
     else
-        echo "Playbook 01-host-setup.yml not found, installing manually..."
-        install_packages
-        setup_network
-        setup_nginx
+        echo "Error: host-setup.sh not found at $SCRIPT_DIR" >&2
+        return 1
     fi
     ensure_state_dirs
     echo ""
     echo "Host initialized. Now add demos with:"
     echo "  democtl add small"
     echo "  democtl apply demos.sh"
-}
-
-install_packages() {
-    apt-get update
-    apt-get install -y \
-        nginx systemd-container debootstrap parted jq e2fsprogs dosfstools \
-        psmisc iptables bridge-utils expect curl git \
-        certbot python3-certbot-nginx
-}
-
-setup_network() {
-    sysctl -w net.ipv4.ip_forward=1
-    systemctl enable --now systemd-networkd
-    systemctl enable --now systemd-resolved
-    mkdir -p /var/lib/machines
-}
-
-setup_nginx() {
-    mkdir -p /var/www/certbot /etc/nginx/sites-enabled
-    ln -sf /etc/nginx/sites-available/iiab-demo.conf /etc/nginx/sites-enabled/ 2>/dev/null || true
 }
 
 ###############################################################################
@@ -400,13 +377,13 @@ build_demo() {
     fi
 
     # Ensure nspawn-loop scripts are accessible
-    if [ ! -d "$SCRIPTS_DIR" ] && [ -d "$NSPAWN_DIR" ]; then
+    if [ ! -d "$SCRIPT_DIR" ] && [ -d "$NSPAWN_DIR" ]; then
         # If our scripts dir doesn't exist, use nspawn-loop directly
         log_demo "$name" "Using nspawn-loop at $NSPAWN_DIR"
     fi
 
     # Build the container image using build-container.sh
-    local build_script="${SCRIPTS_DIR}/build-container.sh"
+    local build_script="${SCRIPT_DIR}/build-container.sh"
     if [ ! -x "$build_script" ]; then
         log_demo "$name" "build-container.sh not found at $build_script, trying nspawn-loop..."
         build_script="${NSPAWN_DIR}/build-container.sh"
@@ -442,9 +419,9 @@ build_demo() {
     fi
 
     # Load RAM image if needed
-    if [ "$RAM_IMAGE" = "true" ] && [ -f "$SCRIPTS_DIR/ramfs-setup.sh" ]; then
+    if [ "$RAM_IMAGE" = "true" ] && [ -f "$SCRIPT_DIR/ramfs-setup.sh" ]; then
         log_demo "$name" "Loading image into RAM..."
-        if bash "$SCRIPTS_DIR/ramfs-setup.sh" load "$name" >> "$demo_dir/build.log" 2>&1; then
+        if bash "$SCRIPT_DIR/ramfs-setup.sh" load "$name" >> "$demo_dir/build.log" 2>&1; then
             log_demo "$name" "Image loaded into RAM"
         else
             log_demo "$name" "Warning: Failed to load image into RAM, using disk"
@@ -452,7 +429,7 @@ build_demo() {
     fi
 
     # Create .nspawn service files
-    local service_script="${SCRIPTS_DIR}/container-service.sh"
+    local service_script="${SCRIPT_DIR}/container-service.sh"
     local svc_args=("$name" "$ip" "--volatile=$VOLATILE")
     if [ "$RAM_IMAGE" = "true" ]; then
         svc_args+=("--ram-image")
@@ -485,8 +462,8 @@ build_demo() {
 
     # Regenerate nginx
     log_demo "$name" "Updating nginx configuration..."
-    if [ -x "$SCRIPTS_DIR/nginx-gen.sh" ]; then
-        bash "$SCRIPTS_DIR/nginx-gen.sh"
+    if [ -x "$SCRIPT_DIR/nginx-gen.sh" ]; then
+        bash "$SCRIPT_DIR/nginx-gen.sh"
     fi
 
     echo "running" > "$demo_dir/status"
@@ -528,8 +505,8 @@ cmd_remove() {
     free_resources "$name"
 
     # Remove from RAMFS if loaded
-    if [ -x "$SCRIPTS_DIR/ramfs-setup.sh" ]; then
-        bash "$SCRIPTS_DIR/ramfs-setup.sh" unload "$name" 2>/dev/null || true
+    if [ -x "$SCRIPT_DIR/ramfs-setup.sh" ]; then
+        bash "$SCRIPT_DIR/ramfs-setup.sh" unload "$name" 2>/dev/null || true
     fi
 
     # Remove image
@@ -550,8 +527,8 @@ cmd_remove() {
     echo "Demo '$name' removed."
 
     # Regenerate nginx
-    if [ -x "$SCRIPTS_DIR/nginx-gen.sh" ]; then
-        bash "$SCRIPTS_DIR/nginx-gen.sh"
+    if [ -x "$SCRIPT_DIR/nginx-gen.sh" ]; then
+        bash "$SCRIPT_DIR/nginx-gen.sh"
     fi
 }
 
@@ -815,8 +792,8 @@ cmd_apply() {
     # Regenerate nginx
     echo ""
     echo "Regenerating nginx configuration..."
-    if [ -x "$SCRIPTS_DIR/nginx-gen.sh" ]; then
-        bash "$SCRIPTS_DIR/nginx-gen.sh"
+    if [ -x "$SCRIPT_DIR/nginx-gen.sh" ]; then
+        bash "$SCRIPT_DIR/nginx-gen.sh"
     fi
 
     echo ""
@@ -829,10 +806,10 @@ cmd_apply() {
 ###############################################################################
 cmd_reload() {
     ensure_root "$@"
-    if [ -x "$SCRIPTS_DIR/nginx-gen.sh" ]; then
-        bash "$SCRIPTS_DIR/nginx-gen.sh"
+    if [ -x "$SCRIPT_DIR/nginx-gen.sh" ]; then
+        bash "$SCRIPT_DIR/nginx-gen.sh"
     else
-        echo "Error: nginx-gen.sh not found at $SCRIPTS_DIR/nginx-gen.sh" >&2
+        echo "Error: nginx-gen.sh not found at $SCRIPT_DIR/nginx-gen.sh" >&2
         return 1
     fi
 }
@@ -842,42 +819,11 @@ cmd_reload() {
 ###############################################################################
 cmd_certbot() {
     ensure_root "$@"
-    if [ -f "$PLAYBOOKS_DIR/06-certbot.yml" ]; then
-        ansible-playbook "$PLAYBOOKS_DIR/06-certbot.yml"
+    if [ -f "$SCRIPT_DIR/certbot-setup.sh" ]; then
+        bash "$SCRIPT_DIR/certbot-setup.sh"
     else
-        # Simple certbot wrapper if playbook not available
-        local domains=()
-        for demo_dir in "$ACTIVE_DIR"/*/; do
-            [ -d "$demo_dir" ] || continue
-            local name
-            name=$(basename "$demo_dir")
-            local subdomain="$name"
-            if [ -f "$demo_dir/config" ]; then
-                # shellcheck source=/dev/null
-                source "$demo_dir/config"
-                subdomain="${SUBDOMAIN:-$name}"
-            fi
-            domains+=("$subdomain.iiab.io")
-        done
-
-        if [ ${#domains[@]} -eq 0 ]; then
-            echo "No active demos to get certificates for"
-            return 0
-        fi
-
-        local domain_args=()
-        for d in "${domains[@]}"; do
-            domain_args+=("-d" "$d")
-        done
-
-        mkdir -p /var/www/certbot
-        certbot certonly \
-            --webroot --webroot-path /var/www/certbot \
-            --agree-tos --no-eff-email --non-interactive \
-            "${domain_args[@]}"
-
-        # Reload nginx
-        nginx -t && systemctl reload nginx
+        echo "Error: certbot-setup.sh not found at $SCRIPT_DIR" >&2
+        return 1
     fi
 }
 
@@ -889,8 +835,8 @@ cmd_ramfs() {
     local action="${1:?Usage: democtl ramfs <load|unload|status|cleanup> [name]}"
     shift
 
-    if [ -x "$SCRIPTS_DIR/ramfs-setup.sh" ]; then
-        bash "$SCRIPTS_DIR/ramfs-setup.sh" "$action" "$@"
+    if [ -x "$SCRIPT_DIR/ramfs-setup.sh" ]; then
+        bash "$SCRIPT_DIR/ramfs-setup.sh" "$action" "$@"
     else
         echo "Error: ramfs-setup.sh not found" >&2
         return 1

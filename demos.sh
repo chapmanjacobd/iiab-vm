@@ -12,7 +12,7 @@
 #   --volatile      no | yes | state  (default: state)
 #   --ram-image     Load image into host tmpfs (default: true)
 #   --size          Disk image size in MB
-#   --local-vars    Path to IIAB local_vars.yml override
+#   --local-vars    Path to IIAB local_vars.yml (relative to cloned IIAB repo in container)
 #   --fallback      Mark as fallback for unknown subdomains
 
 demo add small \
@@ -37,8 +37,8 @@ demo add large \
   --size 30000 \
   --volatile state \
   --ram-image \
-  --local-vars vars/local_vars_large.yml \
-  --fallback
+  --fallback \
+  --local-vars vars/local_vars_large.yml
 
 # Example: test a pull request
 # demo add pr3612 \
