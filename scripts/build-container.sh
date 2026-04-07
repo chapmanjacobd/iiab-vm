@@ -300,8 +300,13 @@ spawn systemd-nspawn -q --network-veth --resolv-conf=off -D $env(MOUNT_DIR) -M b
 
 expect "login: " { send "root\r" }
 
-# Diagnose sshd state before running the IIAB build
-expect -re {#\s?$} { send "echo '=== SSHD DIAGNOSTICS ==='; dpkg -l openssh-server 2>/dev/null | tail -1; systemctl status ssh 2>&1 || true; cat /etc/ssh/sshd_config.d/*.conf 2>/dev/null || echo 'no drop-in configs'; ls -la /etc/ssh/ssh_host_* 2>/dev/null || echo 'no host keys'; ssh-keygen -A 2>&1; echo '=== END DIAGNOSTICS ==='\r" }
+# Debian cloud image prep: generate SSH host keys, fix cloudimg sshd configs, start sshd
+expect -re {#\s?$} { send "echo '=== PRE-Nspawn SETUP ==='; ssh-keygen -A 2>&1; echo 'Host keys:'; ls -la /etc/ssh/ssh_host_* 2>&1\r" }
+
+expect -re {#\s?$} { send "# Fix cloud image drop-in configs that conflict with IIAB; for f in /etc/ssh/sshd_config.d/*.conf; do sed -i 's/^PermitRootLogin/# &/' \"\$f\" 2>/dev/null; sed -i 's/^PasswordAuthentication/# &/' \"\$f\" 2>/dev/null; done; echo 'done'\r" }
+
+# Start ssh service before build so we know it works
+expect -re {#\s?$} { send "systemctl enable ssh 2>&1; systemctl start ssh 2>&1; echo 'SSHD_START_EXIT:'\$?\r" }
 
 expect -re {#\s?$} { send "/root/run_build.sh; echo \"BUILD_EXIT_CODE:\$?\"\r" }
 
