@@ -641,16 +641,29 @@ build_demo() {
 
     log_demo "$name" "Starting container via systemd-nspawn@${name}.service..."
     systemctl daemon-reload
-    if ! systemctl enable --now "systemd-nspawn@${name}.service"; then
-        log_demo "$name" "Error: Failed to start container"
-        log_demo "$name" "--- systemd-nspawn@${name}.service status ---"
-        systemctl status "systemd-nspawn@${name}.service" --no-pager 2>&1 || true
-        log_demo "$name" "--- journalctl -u systemd-nspawn@${name}.service (last 50 lines) ---"
-        journalctl -u "systemd-nspawn@${name}.service" --no-pager -n 50 2>&1 || true
-        log_demo "$name" "--- machine-nspawn@${name}.service status (if exists) ---"
-        systemctl status "systemd-nspawn@${name}" --no-pager 2>&1 || true
-        log_demo "$name" "--- machine-${name}.service status (if exists) ---"
-        systemctl status "machine-${name}.service" --no-pager 2>&1 || true
+    systemctl enable --now "systemd-nspawn@${name}.service"
+
+    # Poll for actual container startup (nspawn can fail asynchronously)
+    sleep 3
+    local poll_count=0
+    local poll_max=15
+    while [ $poll_count -lt $poll_max ]; do
+        if systemctl is-active --quiet "machine-${name}.service" 2>/dev/null || \
+           systemctl is-active --quiet "systemd-nspawn@${name}.service" 2>/dev/null; then
+            break
+        fi
+        poll_count=$((poll_count + 1))
+        sleep 1
+    done
+
+    if [ $poll_count -eq $poll_max ]; then
+        log_demo "$name" "Error: Container did not become active within ${poll_max}s"
+        log_demo "$name" "--- machine-${name}.service state ---"
+        systemctl show "machine-${name}.service" --property=ActiveState,SubState,ExecMainStatus 2>&1 || true
+        log_demo "$name" "--- systemd-nspawn@${name}.service state ---"
+        systemctl show "systemd-nspawn@${name}.service" --property=ActiveState,SubState,ExecMainStatus 2>&1 || true
+        log_demo "$name" "--- journalctl -u machine-${name}.service (last 50 lines) ---"
+        journalctl -u "machine-${name}.service" --no-pager -n 50 2>&1 || true
         log_demo "$name" "--- journalctl _COMM=systemd-nspawn (last 30 lines) ---"
         journalctl _COMM=systemd-nspawn --no-pager -n 30 2>&1 || true
     fi

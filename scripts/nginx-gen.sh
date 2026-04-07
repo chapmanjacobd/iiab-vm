@@ -106,7 +106,7 @@ HEADER
     {
         printf '\n        return 404;\n'
         printf '    }\n'
-        printf '}\n\n'
+        printf '}\n}\n\n'
         printf '# HTTP catch-all for other *.iiab.io\n'
         printf 'server {\n'
         printf '    listen 80;\n'
@@ -177,6 +177,12 @@ HEADER
 generate_nginx > "$NGINX_CONF"
 
 echo "Generated nginx config: $NGINX_CONF"
+echo "--- Generated config (first 60 lines) ---"
+head -60 "$NGINX_CONF"
+echo "---"
+echo "--- Main nginx.conf include directives ---"
+grep -n 'include' /etc/nginx/nginx.conf 2>/dev/null || true
+echo "---"
 
 # Test and reload
 nginx_reload
