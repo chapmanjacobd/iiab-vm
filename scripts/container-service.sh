@@ -102,8 +102,6 @@ NoNewPrivileges=yes
 # Memory restrictions
 RestrictRealtime=yes
 MemoryDenyWriteExecute=yes
-LockPersonality=yes
-RestrictSUIDSGID=yes
 EOF
 
 echo "Created ${SERVICE_OVERRIDE}/override.conf"
