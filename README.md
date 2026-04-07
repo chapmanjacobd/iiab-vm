@@ -2,7 +2,7 @@
 
 **Automated infrastructure for deploying IIAB editions as subdomain-routed containers.**
 
-This system manages the full lifecycle of IIAB demo instances on a Debian 13 host. It uses `systemd-nspawn` for isolation, `nginx` for dynamic routing of `*.iiab.io` subdomains, and `certbot` for automated TLS. High-performance builds occur in RAM (tmpfs) by default, ensuring zero disk I/O overhead during installation.
+This system manages the full lifecycle of IIAB demo instances on a Debian 13 host. It uses `systemd-nspawn` for isolation, `nginx` for dynamic routing of `*.iiab.io` subdomains, and `certbot` for automated TLS.
 
 ---
 
@@ -27,36 +27,41 @@ The `democtl` tool is the primary interface for managing demos.
 - `shell <name>` — Drop directly into a running container.
 - `rebuild <name>` — Refresh a demo while preserving its configuration.
 - `reload` — Manually regenerate Nginx routing from active demos.
-- `reconcile` — Fix resource counter drift if manual changes occurred.
 
-### Deployment Flags
+### Important Flags
 | Flag | Default | Description |
 |---|---|---|
 | `--repo` | `github.com/iiab/iiab.git` | Source repository for IIAB. |
 | `--branch` | `master` | Git ref (branch, tag, or PR head). |
-| `--size` | 15000 | Virtual disk size in MB. |
-| `--ram-image` | `true` | Keep final image in RAM (tmpfs). Set to `false` for disk storage. |
-| `--build-on-disk`| `false` | Force build process to use disk instead of RAM. |
 | `--local-vars` | `vars/local_vars_small.yml` | Path to IIAB configuration variables. |
+| `--size` | 15000 | Virtual disk size in MB. |
+| `--disk-backed` | `false` | Store final image on disk instead of RAM (tmpfs). |
+| `--build-on-disk`| `false` | Perform build on disk instead of RAM (tmpfs). |
+| `--volatile` | `state` | Resilience: `no` (persistent), `state` (reset /var), `yes` (stateless). |
 
 ---
 
 ## Technical Architecture
 
-### Build Model: RAM-First
-Builds happen in `/run/iiab-ramfs/` (tmpfs) to maximize speed.
-1. **Prepare**: Base image (~500MB) is copied to RAM.
-2. **Install**: Image is grown, mounted via loopback, and IIAB is installed.
-3. **Finalize**: Image is shrunk. It remains in RAM (`--ram-image true`) or is moved to `/var/lib/machines/` on disk.
+### Storage & Persistence
 
-### Execution Modes
-Controlled via `--volatile` and `--ram-image`:
-- **Persistent RAM (Default)**: `volatile: state`, `ram-image: true`. OS is immutable in RAM; `/var` resets on reboot.
-- **Persistent Disk**: `volatile: no`, `ram-image: false`. Standard stateful disk-backed container.
-- **Stateless**: `volatile: yes`. Entire container resets to image state on every boot.
+There are three independent layers of storage handling:
+
+1. **Building Storage**: Where the image is built.
+   - **Default (RAM)**: Builds occur in `/run/iiab-ramfs/` (tmpfs) for maximum speed.
+   - **Disk Override**: Use `--build-on-disk` if host RAM is constrained.
+
+2. **Runtime Storage**: Where the final image lives.
+   - **Default (RAM)**: The final `.raw` image is kept in RAM. Zero disk I/O during execution.
+   - **Disk Override**: Use `--disk-backed` to move the final image to `/var/lib/machines/`.
+
+3. **Runtime Persistence**: How changes inside the container are handled.
+   - **`--volatile state` (Default)**: The OS is read-only; `/var` is an overlay that resets on every boot.
+   - **`--volatile no`**: All changes are persistent to the underlying image.
+   - **`--volatile yes`**: The entire container is stateless; everything resets on reboot.
 
 ### Network & Routing
-- **Internal**: Containers receive unique IPs from a internal pool (`10.0.3.x`).
+- **Internal**: Containers receive unique IPs from an internal pool (`10.0.3.x`).
 - **External**: `scripts/nginx-gen.sh` dynamically maps subdomains to container IPs and manages ACME challenge paths for Certbot.
 
 ---
@@ -68,6 +73,8 @@ Test any IIAB PR by pointing `democtl` to the specific git ref:
 ```bash
 democtl add pr123 --branch refs/pull/123/head --description "Testing PR #123"
 ```
+
+Then go to https://**pr123**.iiab.io/home/
 
 ### Resource Management
 `democtl` tracks RAM and disk allocation. Use `democtl list` to see current usage. If a build fails due to memory constraints, use `democtl ramfs cleanup` to clear stale images from tmpfs.

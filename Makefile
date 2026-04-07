@@ -20,26 +20,17 @@ init:
 # Convenience targets — add a single demo
 small:
 	bash democtl add small \
-		--branch master \
 		--size 12000 \
-		--volatile state \
-		--ram-image \
 		--local-vars vars/local_vars_small.yml
 
 medium:
 	bash democtl add medium \
-		--branch master \
 		--size 20000 \
-		--volatile state \
-		--ram-image \
 		--local-vars vars/local_vars_medium.yml
 
 large:
 	bash democtl add large \
-		--branch master \
 		--size 30000 \
-		--volatile state \
-		--ram-image \
 		--fallback \
 		--local-vars vars/local_vars_large.yml
 

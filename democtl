@@ -380,8 +380,8 @@ cmd_add() {
             --repo)       repo="$2"; shift 2 ;;
             --size)       size_mb="$2"; shift 2 ;;
             --volatile)   volatile="$2"; shift 2 ;;
-            --ram-image)  ram_image=true; shift ;;
-            --no-ram-image) ram_image=false; shift ;;
+            --disk-backed) ram_image=false; shift ;;
+            --ram-image)  ram_image=true; shift ;;  # keep as hidden/legacy alias
             --local-vars) local_vars="$2"; shift 2 ;;
             --fallback)   fallback=true; shift ;;
             --description) description="$2"; shift 2 ;;
@@ -792,7 +792,7 @@ cmd_rebuild() {
     [ -n "${repo:-}" ] && add_args+=("--repo" "$repo")
     [ -n "${size_mb:-}" ] && add_args+=("--size" "${size_mb:-15000}")
     [ -n "${volatile:-}" ] && add_args+=("--volatile" "${volatile:-state}")
-    [ "${ram_image:-true}" = "false" ] && add_args+=("--no-ram-image")
+    [ "${ram_image:-true}" = "false" ] && add_args+=("--disk-backed")
     [ "${build_on_disk:-false}" = "true" ] && add_args+=("--build-on-disk")
     [ -n "${local_vars:-}" ] && add_args+=("--local-vars" "$local_vars")
     [ "${fallback:-false}" = "true" ] && add_args+=("--fallback")
@@ -1129,9 +1129,8 @@ Add flags:
   --repo <url>              IIAB git repo (default: github.com/iiab/iiab.git)
   --branch <ref>            Git branch/tag/ref (default: master)
   --size <MB>               Image size (default: 15000)
+  --disk-backed             Keep image on disk instead of RAM (default: no)
   --volatile <mode>         no | yes | state (default: state)
-  --ram-image               Load image into host RAM (default: true)
-  --no-ram-image            Keep image on disk
   --local-vars <path>       Path to local_vars.yml (relative to IIAB repo in container)
   --fallback                Use as fallback for unknown subdomains
   --description <text>      Human-readable description
