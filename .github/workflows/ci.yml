@@ -56,11 +56,27 @@ jobs:
         run: sudo ./democtl init
       - name: Build unittest demo
         run: |
+          # Create minimal test vars file
+          cat > /tmp/local_vars_unittest.yml << 'EOF'
+          # Minimal IIAB config for unittest
+          iiab_install_kiwix: False
+          iiab_install_kalite: False
+          iiab_install_osm_maps: False
+          iiab_install_pathagar: False
+          iiab_install_phet: False
+          iiab_install_sugar_on_debian: False
+          iiab_install_epubnet: False
+          hostapd_install: False
+          hostapd_enabled: False
+          captiveportal_install: False
+          captiveportal_enabled: False
+          iiab_admin_user_install: False
+          EOF
+
           # Use a larger size (4000MB) to fit the 3GB base image in the tmpfs build directory
           sudo ./democtl add unittest \
-            --edition unittest \
             --size 4000 \
-            --local-vars vars/local_vars_unittest.yml \
+            --local-vars /tmp/local_vars_unittest.yml \
             --no-ram-image \
             --fg
       - name: Save base image for cache
