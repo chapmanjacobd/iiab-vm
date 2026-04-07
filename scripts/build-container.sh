@@ -259,6 +259,7 @@ echo "$NAME" > "$MOUNT_DIR/etc/hostname"
 # Container and hardware-specific overrides
 cat >> "$MOUNT_DIR/etc/iiab/local_vars.yml" << 'EOF'
 is_VM: True
+iiab_admin_user_install: False
 EOF
 
 ###############################################################################
@@ -398,8 +399,12 @@ PART_INFO=$(parted -m --script "$LOOPDEV" unit B print | grep "^1:")
 ROOTFS_PARTSTART=$(echo "$PART_INFO" | awk -F ":" '{print $2}' | tr -d 'B')
 ROOTFS_PARTNEWEND=$((ROOTFS_PARTSTART + TOTAL_REQUIRED_SIZE - 1))
 
+# Fix GPT backup location to avoid interactive prompt during resizepart
+sgdisk -e "$LOOPDEV" >/dev/null 2>&1 || true
+sync
+
 echo "Resizing partition to ${ROOTFS_PARTNEWEND}..."
-(yes Yes | parted ---pretend-input-tty "$LOOPDEV" unit b resizepart 1 "$ROOTFS_PARTNEWEND" || true) >/dev/null 2>&1
+(yes "Yes" | parted ---pretend-input-tty "$LOOPDEV" unit b resizepart 1 "$ROOTFS_PARTNEWEND" || true) >/dev/null 2>&1
 sync
 partprobe "$LOOPDEV" 2>/dev/null || true
 udevadm settle 2>/dev/null || sleep 2
