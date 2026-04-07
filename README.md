@@ -25,6 +25,7 @@ The `democtl` tool is the primary interface for managing demos.
 
 ### Important Flags
 | Flag | Default | Description |
+|---|---|---|
 | `--repo` | `github.com/iiab/iiab.git` | Source repository for IIAB. |
 | `--branch` | `master` | Git ref (branch, tag, or PR head). |
 | `--local-vars` | `vars/local_vars_small.yml` | Path to IIAB configuration variables. |
