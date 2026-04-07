@@ -54,6 +54,7 @@ cat > "${SETTINGS_DIR}/${NAME}.nspawn" << EOF
 [Exec]
 Hostname=${NAME}
 Boot=true
+PrivateUsers=no
 
 [Network]
 VirtualEthernet=true
