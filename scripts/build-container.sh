@@ -263,11 +263,20 @@ iiab_admin_user_install: False
 EOF
 
 ###############################################################################
-# Step 3: Run IIAB installer inside nspawn
+# Step 3: Bootstrap container (SKIPPING IIAB install for fast iteration)
 ###############################################################################
 echo ""
-echo "=== Step 3: Running IIAB installer (this takes 30-60 minutes) ==="
+echo "=== Step 3: Bootstrapping container (IIAB install SKIPPED) ==="
 
+# Minimal setup — no IIAB install
+systemd-firstboot --root="$MOUNT_DIR" --delete-root-password --force
+rm -f "$MOUNT_DIR/etc/resolv.conf"
+echo "nameserver 8.8.8.8" > "$MOUNT_DIR/etc/resolv.conf"
+
+echo "=== Bootstrap complete (no IIAB) ==="
+
+# SKIP: Full IIAB install
+: <<'DISABLED_IIAB_INSTALL'
 # Network setup
 systemctl is-active --quiet systemd-networkd || systemctl start systemd-networkd
 systemctl is-active --quiet systemd-resolved || systemctl start systemd-resolved
@@ -330,6 +339,7 @@ EXPECT_EOF
 
 echo ""
 echo "=== IIAB install complete ==="
+DISABLED_IIAB_INSTALL
 
 ###############################################################################
 # Step 4: Shrink the image
