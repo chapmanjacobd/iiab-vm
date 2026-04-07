@@ -50,9 +50,18 @@ There are three independent layers of storage handling:
    - Disk Override: Use `--disk-backed` to move the final image to `/var/lib/machines/`.
 
 3. Runtime Persistence: How changes inside the container are handled.
-   - `--volatile state` (Default): The OS is read-only; `/var` is an overlay that resets on every boot.
-   - `--volatile no`: All changes are persistent to the underlying image.
-   - `--volatile yes`: The entire container is stateless; everything resets on reboot.
+
+| Mode | Rootfs | /var | Persists across restarts? | Requires bootable /usr? |
+|---|---|---|---|---|
+| `--volatile no` | persistent | persistent | Yes | No |
+| `--volatile overlay` (Default) | overlay (tmpfs upper) | same overlay | No | No |
+| `--volatile state` | volatile (tmpfs) | persistent | /var only | Yes |
+| `--volatile yes` | volatile (tmpfs) | volatile | Nothing | Yes |
+
+- `no`: The root filesystem is persistent. All changes written to the underlying image survive restarts.
+- `overlay`: An overlayfs is placed on top of the rootfs with a tmpfs upper layer. The image stays read-only on disk, but all changes (including `/var`) are discarded when the container is stopped. Works with any rootfs.
+- `state`: The system creates a volatile overlay for `/etc` and `/usr`, but `/var` is mounted from a persistent location. Requires a bootable system that can function with only `/usr` in RAM.
+- `yes`: The entire root filesystem is volatile in RAM. Requires a bootable system that can function with only `/usr`. Everything resets on every boot.
 
 ### Network & Routing
 - Internal: Containers receive unique IPs from an internal pool (`10.0.3.x`).

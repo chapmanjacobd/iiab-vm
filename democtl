@@ -352,7 +352,7 @@ cmd_add() {
     # Defaults
     local name="" branch="master"
     local repo="https://github.com/iiab/iiab.git"
-    local size_mb=15000 volatile="state" ram_image=true
+    local size_mb=15000 volatile="overlay" ram_image=true
     local local_vars="" wildcard=false description=""
     local foreground=false build_on_disk=false skip_install=false
 
@@ -656,8 +656,7 @@ build_demo() {
     local poll_max=20
     local container_active=false
     while [ $poll_count -lt $poll_max ]; do
-        local active="" substate=""
-        active=$(systemctl show "systemd-nspawn@${name}.service" --property=ActiveState --value 2>/dev/null || echo "")
+        local substate=""
         substate=$(systemctl show "systemd-nspawn@${name}.service" --property=SubState --value 2>/dev/null || echo "")
         # Handle both stripped and non-stripped values (older systemd)
         if [ "$substate" = "running" ] || [[ "$substate" == *"=running" ]]; then
@@ -1299,7 +1298,7 @@ Add flags:
   --branch <ref>            Git branch/tag/ref (default: master)
   --size <MB>               Image size (default: 15000)
   --disk-backed             Keep image on disk instead of RAM (default: no)
-  --volatile <mode>         no | yes | state (default: state)
+  --volatile <mode>         no | overlay | state | yes (default: overlay)
   --local-vars <path>       Path to local_vars.yml (relative to IIAB repo in container)
   --wildcard                Use as wildcard for unknown subdomains
   --description <text>      Human-readable description

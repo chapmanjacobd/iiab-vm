@@ -4,9 +4,10 @@
 #   container-service.sh <name> <ip> [--volatile=MODE] [--ram-image]
 #
 # --volatile=MODE  Controls systemd's Volatile= setting:
-#   no     — Standard persistent container (default)
-#   yes    — Full overlay: entire rootfs is tmpfs, changes discarded on stop
-#   state  — State overlay: only /var is tmpfs, /usr stays read-only from image
+#   no      — Persistent rootfs. All changes survive restarts.
+#   overlay — Overlayfs with tmpfs upper. Changes discarded on stop. Works with any rootfs.
+#   state   — Volatile /etc and /usr, persistent /var. Requires bootable /usr-only system.
+#   yes     — Full volatile rootfs. Everything resets on boot. Requires bootable /usr-only system.
 #
 # --ram-image  Image is loaded into host tmpfs. Container boots from RAM,
 #              never reads from disk after initial copy.
@@ -23,8 +24,8 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --volatile=*)
             VOLATILE="${1#--volatile=}"
-            if [[ ! "$VOLATILE" =~ ^(no|yes|state)$ ]]; then
-                echo "Error: --volatile must be 'no', 'yes', or 'state' (got: $VOLATILE)" >&2
+            if [[ ! "$VOLATILE" =~ ^(no|overlay|state|yes)$ ]]; then
+                echo "Error: --volatile must be 'no', 'overlay', 'state', or 'yes' (got: $VOLATILE)" >&2
                 exit 1
             fi
             ;;
