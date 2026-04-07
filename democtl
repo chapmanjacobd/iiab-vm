@@ -249,20 +249,19 @@ check_resources() {
 
     load_resources
 
-    # All demos need disk space for the build process (base image download + install)
-    # The build creates a ~size_mb image on disk, plus overhead for the base image
-    local build_disk_needed=$(( size_mb + DISK_BASE + DISK_BUFFER ))
+    # All demos need disk space for the shared base image (downloaded once, reused)
     local disk_avail
     disk_avail=$(df -m /var/lib/machines 2>/dev/null | awk 'NR==2 {print $4}' || echo 0)
-    if [ "$build_disk_needed" -gt "$disk_avail" ]; then
-        echo "Error: Insufficient disk space for demo '$name' build." >&2
-        echo "  Need: ~${build_disk_needed}MB (image: ${size_mb}MB + base + overhead)" >&2
+    local base_disk_needed=$(( DISK_BASE + 500 ))  # base image + small overhead
+    if [ "$base_disk_needed" -gt "$disk_avail" ]; then
+        echo "Error: Insufficient disk space for base image." >&2
+        echo "  Need: ~${base_disk_needed}MB" >&2
         echo "  Available: ${disk_avail}MB" >&2
         return 1
     fi
 
     if $ram_image; then
-        # RAM-image demos also need enough RAM to hold the final image
+        # RAM-image demos build entirely in RAM — only the base image uses disk (shared)
         local ram_avail=$(( RAM_TOTAL - RAM_ALLOCATED - RAM_BUFFER ))
         if [ "$size_mb" -gt "$ram_avail" ]; then
             echo "Error: Insufficient RAM for demo '$name'." >&2
