@@ -49,9 +49,6 @@ generate_nginx() {
 
 HEADER
 
-    # Collect subdomains for HTTP server
-    all_server_names=""
-
     # Upstream blocks
     for name in "${demo_names[@]}"; do
         # shellcheck source=/dev/null
@@ -59,25 +56,26 @@ HEADER
         ip=$(cat "$ACTIVE_DIR/$name/ip")
         subdomain=$(sanitize_subdomain "${SUBDOMAIN:-$name}")
         upstream_name=$(echo "$name" | tr '-' '_')
-        all_server_names="${all_server_names}${subdomain}.iiab.io "
 
         printf "upstream %s {\n    server %s:80;\n    keepalive 32;\n}\n\n" \
             "$upstream_name" "$ip"
     done
 
-    # HTTP server - ACME challenges + redirect
-    {
-        printf '# HTTP server - serve ACME challenges + conditional redirect to HTTPS\n'
-        printf 'server {\n'
-        printf '    listen 80 default_server;\n'
-        printf '    listen [::]:80 default_server;\n'
-        printf '    server_name %s;\n\n' "$all_server_names"
-        printf '    location /.well-known/acme-challenge/ {\n'
-        printf '        root %s;\n' "$CERTBOT_ROOT"
-        printf '    }\n\n'
-        printf '    location / {\n'
-    }
+    # Fallback HTTP catch-all for *.iiab.io
+    printf '# Fallback HTTP catch-all for *.iiab.io\n'
+    printf 'server {\n'
+    printf '    listen 80 default_server;\n'
+    printf '    listen [::]:80 default_server;\n'
+    printf '    server_name *.iiab.io;\n\n'
+    printf '    location /.well-known/acme-challenge/ {\n'
+    printf '        root %s;\n' "$CERTBOT_ROOT"
+    printf '    }\n\n'
+    printf '    location / {\n'
+    printf '        return 302 https://%s$request_uri;\n' "$fallback_domain"
+    printf '    }\n'
+    printf '}\n\n'
 
+    # HTTP server blocks — one per demo (avoids if-in-location issues)
     for name in "${demo_names[@]}"; do
         # shellcheck source=/dev/null
         source "$ACTIVE_DIR/$name/config"
@@ -86,40 +84,42 @@ HEADER
         upstream_name=$(echo "$name" | tr '-' '_')
 
         if [ -f "$cert_path" ]; then
-            printf '        if ($host = "%s.iiab.io") {\n' "$subdomain"
-            printf '            return 301 https://$host$request_uri;\n'
-            printf '        }\n'
+            # HTTPS available — redirect HTTP to HTTPS
+            printf '# HTTP redirect for %s.iiab.io\n' "$subdomain"
+            printf 'server {\n'
+            printf '    listen 80;\n'
+            printf '    listen [::]:80;\n'
+            printf '    server_name %s.iiab.io;\n\n' "$subdomain"
+            printf '    location /.well-known/acme-challenge/ {\n'
+            printf '        root %s;\n' "$CERTBOT_ROOT"
+            printf '    }\n\n'
+            printf '    location / {\n'
+            printf '        return 301 https://$host$request_uri;\n'
+            printf '    }\n'
+            printf '}\n\n'
         else
-            printf '        if ($host = "%s.iiab.io") {\n' "$subdomain"
-            printf '            proxy_pass http://%s;\n' "$upstream_name"
-            printf '            proxy_set_header Host $host;\n'
-            printf '            proxy_set_header X-Real-IP $remote_addr;\n'
-            printf '            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n'
-            printf '            proxy_set_header X-Forwarded-Proto $scheme;\n'
-            printf '            proxy_http_version 1.1;\n'
-            printf '            proxy_set_header Upgrade $http_upgrade;\n'
-            printf '            proxy_set_header Connection "upgrade";\n'
-            printf '        }\n'
+            # No HTTPS — proxy to container
+            printf '# HTTP proxy for %s.iiab.io\n' "$subdomain"
+            printf 'server {\n'
+            printf '    listen 80;\n'
+            printf '    listen [::]:80;\n'
+            printf '    server_name %s.iiab.io;\n\n' "$subdomain"
+            printf '    location /.well-known/acme-challenge/ {\n'
+            printf '        root %s;\n' "$CERTBOT_ROOT"
+            printf '    }\n\n'
+            printf '    location / {\n'
+            printf '        proxy_pass http://%s;\n' "$upstream_name"
+            printf '        proxy_set_header Host $host;\n'
+            printf '        proxy_set_header X-Real-IP $remote_addr;\n'
+            printf '        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n'
+            printf '        proxy_set_header X-Forwarded-Proto $scheme;\n'
+            printf '        proxy_http_version 1.1;\n'
+            printf '        proxy_set_header Upgrade $http_upgrade;\n'
+            printf '        proxy_set_header Connection "upgrade";\n'
+            printf '    }\n'
+            printf '}\n\n'
         fi
     done
-
-    {
-        printf '\n        return 404;\n'
-        printf '    }\n'
-        printf '}\n\n'
-        printf '# HTTP catch-all for other *.iiab.io\n'
-        printf 'server {\n'
-        printf '    listen 80;\n'
-        printf '    listen [::]:80;\n'
-        printf '    server_name *.iiab.io;\n\n'
-        printf '    location /.well-known/acme-challenge/ {\n'
-        printf '        root %s;\n' "$CERTBOT_ROOT"
-        printf '    }\n\n'
-        printf '    location / {\n'
-        printf '        return 302 https://%s$request_uri;\n' "$fallback_domain"
-        printf '    }\n'
-        printf '}\n\n'
-    }
 
     # HTTPS server blocks for each demo
     for name in "${demo_names[@]}"; do
