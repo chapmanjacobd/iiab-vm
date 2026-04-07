@@ -55,8 +55,6 @@ Hostname=${NAME}
 Boot=true
 PrivateUsers=yes
 NoNewPrivileges=yes
-SystemCallArchitectures=native
-RestrictNamespaces=yes
 
 [Network]
 VirtualEthernet=yes
@@ -107,8 +105,12 @@ DeviceAllow=char-random rw
 # Privilege restrictions
 NoNewPrivileges=yes
 
-# Restrict socket families to what's needed for web services
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# Restrict socket families to what's needed for web services + netlink for networking
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK AF_PACKET
+
+# Syscall / namespace restrictions
+SystemCallArchitectures=native
+RestrictNamespaces=yes
 
 # Memory restrictions
 RestrictRealtime=yes
