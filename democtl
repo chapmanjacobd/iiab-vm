@@ -641,7 +641,19 @@ build_demo() {
 
     log_demo "$name" "Starting container via systemd-nspawn@${name}.service..."
     systemctl daemon-reload
-    systemctl enable --now "systemd-nspawn@${name}.service"
+    if ! systemctl enable --now "systemd-nspawn@${name}.service"; then
+        log_demo "$name" "Error: Failed to start container"
+        log_demo "$name" "--- systemd-nspawn@${name}.service status ---"
+        systemctl status "systemd-nspawn@${name}.service" --no-pager 2>&1 || true
+        log_demo "$name" "--- journalctl -u systemd-nspawn@${name}.service (last 50 lines) ---"
+        journalctl -u "systemd-nspawn@${name}.service" --no-pager -n 50 2>&1 || true
+        log_demo "$name" "--- machine-nspawn@${name}.service status (if exists) ---"
+        systemctl status "systemd-nspawn@${name}" --no-pager 2>&1 || true
+        log_demo "$name" "--- machine-${name}.service status (if exists) ---"
+        systemctl status "machine-${name}.service" --no-pager 2>&1 || true
+        log_demo "$name" "--- journalctl _COMM=systemd-nspawn (last 30 lines) ---"
+        journalctl _COMM=systemd-nspawn --no-pager -n 30 2>&1 || true
+    fi
 
     # Regenerate nginx
     log_demo "$name" "Updating nginx configuration..."

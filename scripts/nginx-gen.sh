@@ -106,7 +106,7 @@ HEADER
     {
         printf '\n        return 404;\n'
         printf '    }\n'
-        printf '}\n}\n\n'
+        printf '}\n\n'
         printf '# HTTP catch-all for other *.iiab.io\n'
         printf 'server {\n'
         printf '    listen 80;\n'
