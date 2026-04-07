@@ -55,6 +55,8 @@ Hostname=${NAME}
 Boot=true
 PrivateUsers=yes
 NoNewPrivileges=yes
+SystemCallArchitectures=native
+RestrictNamespaces=yes
 
 [Network]
 VirtualEthernet=yes
@@ -91,6 +93,12 @@ ProtectHome=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectKernelLogs=yes
+ProtectClock=yes
+ProtectHostname=yes
+
+# Process visibility - only expose PID info
+ProcSubset=pid
+ProtectProc=invisible
 
 # Device access - restrict to only what nspawn needs
 DevicePolicy=closed
@@ -98,6 +106,9 @@ DeviceAllow=char-random rw
 
 # Privilege restrictions
 NoNewPrivileges=yes
+
+# Restrict socket families to what's needed for web services
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 
 # Memory restrictions
 RestrictRealtime=yes
