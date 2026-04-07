@@ -87,26 +87,31 @@ cat > "${SERVICE_OVERRIDE}/override.conf" << EOF
 Restart=${RESTART_POLICY}
 RestartSec=30
 
-# Filesystem restrictions
-ProtectSystem=strict
+# Filesystem restrictions - ProtectSystem=full protects /usr and /boot
+# but allows writes to /etc and /var where nspawn needs access
+ProtectSystem=full
 ProtectHome=yes
-ReadWritePaths=/var/lib/machines/${NAME}
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
 
-# Device access restrictions
+# Device access - restrict to only what nspawn needs
 DevicePolicy=closed
 DeviceAllow=char-random rw
 
 # Privilege restrictions
 NoNewPrivileges=yes
 
-# Additional hardening
-ProtectKernelTunables=yes
-ProtectKernelModules=yes
-ProtectControlGroups=yes
+# Namespace & memory restrictions
 RestrictRealtime=yes
 RestrictNamespaces=yes
 MemoryDenyWriteExecute=yes
 LockPersonality=yes
+RestrictSUIDSGID=yes
+
+# Restrict architecture and personality
+Architecture=native
 EOF
 
 echo "Created ${SERVICE_OVERRIDE}/override.conf"
