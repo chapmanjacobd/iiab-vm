@@ -1118,6 +1118,135 @@ cmd_ramfs() {
 }
 
 ###############################################################################
+# democtl shutdown
+###############################################################################
+cmd_shutdown() {
+    ensure_root "$@"
+    local name="${1:?Error: demo name required}"
+
+    local demo_dir="$ACTIVE_DIR/$name"
+    if [ ! -d "$demo_dir" ]; then
+        echo "Error: demo '$name' not found" >&2
+        return 1
+    fi
+
+    local status
+    status=$(cat "$demo_dir/status" 2>/dev/null || echo "unknown")
+
+    if [ "$status" != "running" ]; then
+        echo "Error: demo '$name' is not running (status: $status)" >&2
+        return 1
+    fi
+
+    echo "Shutting down demo '$name'..."
+    systemctl stop "systemd-nspawn@${name}.service" 2>/dev/null || true
+    systemctl disable "systemd-nspawn@${name}.service" 2>/dev/null || true
+    echo "stopped" > "$demo_dir/status"
+    echo "Demo '$name' has been shut down."
+}
+
+###############################################################################
+# democtl boot
+###############################################################################
+cmd_boot() {
+    ensure_root "$@"
+    local name="${1:?Error: demo name required}"
+
+    local demo_dir="$ACTIVE_DIR/$name"
+    if [ ! -d "$demo_dir" ]; then
+        echo "Error: demo '$name' not found" >&2
+        return 1
+    fi
+
+    local status
+    status=$(cat "$demo_dir/status" 2>/dev/null || echo "unknown")
+
+    if [ "$status" = "running" ]; then
+        echo "Error: demo '$name' is already running" >&2
+        return 1
+    fi
+
+    # Ensure image symlink exists
+    if [ -f "/run/iiab-ramfs/${name}.raw" ]; then
+        ln -sf "/run/iiab-ramfs/${name}.raw" "/var/lib/machines/${name}.raw"
+    fi
+
+    if [ ! -f "/var/lib/machines/${name}.raw" ]; then
+        echo "Error: Image not found for demo '$name'" >&2
+        return 1
+    fi
+
+    echo "Booting demo '$name'..."
+    systemctl enable --now "systemd-nspawn@${name}.service"
+
+    # Poll for actual container startup
+    sleep 3
+    local poll_count=0
+    local poll_max=15
+    while [ $poll_count -lt $poll_max ]; do
+        if systemctl is-active --quiet "machine-${name}.service" 2>/dev/null || \
+           systemctl is-active --quiet "systemd-nspawn@${name}.service" 2>/dev/null; then
+            break
+        fi
+        poll_count=$((poll_count + 1))
+        sleep 1
+    done
+
+    if [ $poll_count -eq $poll_max ]; then
+        echo "Error: Container did not become active within ${poll_max}s" >&2
+        return 1
+    fi
+
+    echo "running" > "$demo_dir/status"
+    echo "Demo '$name' is now running!"
+}
+
+###############################################################################
+# democtl reboot
+###############################################################################
+cmd_reboot() {
+    ensure_root "$@"
+    local name="${1:?Error: demo name required}"
+
+    local demo_dir="$ACTIVE_DIR/$name"
+    if [ ! -d "$demo_dir" ]; then
+        echo "Error: demo '$name' not found" >&2
+        return 1
+    fi
+
+    local status
+    status=$(cat "$demo_dir/status" 2>/dev/null || echo "unknown")
+
+    if [ "$status" != "running" ]; then
+        echo "Error: demo '$name' is not running (status: $status)" >&2
+        return 1
+    fi
+
+    echo "Rebooting demo '$name'..."
+    systemctl restart "systemd-nspawn@${name}.service"
+
+    # Poll for actual container startup
+    sleep 3
+    local poll_count=0
+    local poll_max=15
+    while [ $poll_count -lt $poll_max ]; do
+        if systemctl is-active --quiet "machine-${name}.service" 2>/dev/null || \
+           systemctl is-active --quiet "systemd-nspawn@${name}.service" 2>/dev/null; then
+            break
+        fi
+        poll_count=$((poll_count + 1))
+        sleep 1
+    done
+
+    if [ $poll_count -eq $poll_max ]; then
+        echo "Error: Container did not become active within ${poll_max}s after reboot" >&2
+        return 1
+    fi
+
+    echo "Demo '$name' has been rebooted and is running!"
+}
+
+###############################################################################
 # democtl help
 ###############################################################################
 cmd_help() {
@@ -1135,6 +1264,9 @@ Commands:
   status <name>                 Detailed status for a demo
   logs <name>                   Show build log or container journal
   shell <name>                  Open shell in container
+  shutdown <name>               Stop a running demo
+  boot <name>                   Start a stopped demo
+  reboot <name>                 Restart a running demo
   reload                        Regenerate nginx config from active demos
   ramfs <action> [name]         Manage RAM-loaded images (load/unload/status/cleanup)
   reconcile                     Fix resource counter drift and check ghost IPs
@@ -1157,6 +1289,9 @@ Examples:
   democtl add pr3612 --local-vars vars/local_vars_large.yml --branch refs/pull/3612/head --volatile yes
   democtl list
   democtl status small
+  democtl shutdown small
+  democtl boot small
+  democtl reboot small
   democtl remove pr3612
 EOF
 }
@@ -1177,6 +1312,9 @@ main() {
         status)    cmd_status "$@" ;;
         logs)      cmd_logs "$@" ;;
         shell)     cmd_shell "$@" ;;
+        shutdown)  cmd_shutdown "$@" ;;
+        boot)      cmd_boot "$@" ;;
+        reboot)    cmd_reboot "$@" ;;
         reload)    cmd_reload "$@" ;;
         ramfs)     cmd_ramfs "$@" ;;
         reconcile) cmd_reconcile "$@" ;;
