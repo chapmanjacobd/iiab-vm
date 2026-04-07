@@ -657,8 +657,11 @@ build_demo() {
     local container_active=false
     while [ $poll_count -lt $poll_max ]; do
         local substate=""
+        # --value strips the property name on newer systemd; fallback without it
         substate=$(systemctl show "machine-${name}.service" --property=SubState --value 2>/dev/null || echo "")
-        if [ "$substate" = "running" ]; then
+        log_demo "$name" "  poll ${poll_count}: substate='${substate}'"
+        # Handle both "running" and "SubState=running" (older --value behavior)
+        if [ "$substate" = "running" ] || [ "$substate" = "SubState=running" ]; then
             container_active=true
             break
         fi
