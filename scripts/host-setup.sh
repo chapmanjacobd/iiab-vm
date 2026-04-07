@@ -202,6 +202,10 @@ if [ -z "$EXT_IF" ]; then
     echo "Warning: Could not detect external interface, skipping iptables" >&2
 else
     setup_iptables_nat "$EXT_IF"
+
+    # Add container-to-container isolation (applies to all current and future containers)
+    # Called after NAT rules so ordering is correct in FORWARD chain
+    add_container_isolation
 fi
 
 # Make iptables persistent
@@ -212,6 +216,7 @@ fi
 
 mkdir -p /etc/iptables
 iptables-save > /etc/iptables/rules.v4
+echo "Iptables rules saved to /etc/iptables/rules.v4"
 
 ###############################################################################
 # 7. Create required directories (idempotent)

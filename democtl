@@ -354,7 +354,7 @@ cmd_add() {
     local repo="https://github.com/iiab/iiab.git"
     local size_mb=15000 volatile="state" ram_image=true
     local local_vars="" wildcard=false description=""
-    local foreground=false build_on_disk=false
+    local foreground=false build_on_disk=false skip_install=false
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -370,6 +370,7 @@ cmd_add() {
             --wildcard)   wildcard=true; shift ;;
             --description) description="$2"; shift 2 ;;
             --build-on-disk) build_on_disk=true; shift ;;
+            --skip-install) skip_install=true; shift ;;
             --fg)         foreground=true; shift ;;
             *)
                 if [ -z "$name" ]; then
@@ -457,6 +458,7 @@ IMAGE_SIZE_MB=$size_mb
 VOLATILE="$volatile"
 RAM_IMAGE=$ram_image
 BUILD_ON_DISK=$build_on_disk
+SKIP_INSTALL=$skip_install
 LOCAL_VARS="$local_vars"
 WILDCARD=$wildcard
 DESCRIPTION="$description"
@@ -597,6 +599,10 @@ build_demo() {
         build_args+=("--build-on-disk")
     fi
 
+    if [ "${SKIP_INSTALL:-false}" = "true" ]; then
+        build_args+=("--skip-install")
+    fi
+
     if [ -n "$LOCAL_VARS" ]; then
         build_args+=("--local-vars" "$LOCAL_VARS")
     fi
@@ -641,23 +647,27 @@ build_demo() {
 
     log_demo "$name" "Starting container via systemd-nspawn@${name}.service..."
     systemctl daemon-reload
-    systemctl enable --now "systemd-nspawn@${name}.service"
+    systemctl enable --now "systemd-nspawn@${name}.service" 2>/dev/null || true
 
     # Poll for actual container startup (nspawn can fail asynchronously)
+    # We check for SubState=running (not just "activating" which covers crash-loops)
     sleep 3
     local poll_count=0
-    local poll_max=15
+    local poll_max=20
+    local container_active=false
     while [ $poll_count -lt $poll_max ]; do
-        if systemctl is-active --quiet "machine-${name}.service" 2>/dev/null || \
-           systemctl is-active --quiet "systemd-nspawn@${name}.service" 2>/dev/null; then
+        local substate=""
+        substate=$(systemctl show "machine-${name}.service" --property=SubState --value 2>/dev/null || echo "")
+        if [ "$substate" = "running" ]; then
+            container_active=true
             break
         fi
         poll_count=$((poll_count + 1))
         sleep 1
     done
 
-    if [ $poll_count -eq $poll_max ]; then
-        log_demo "$name" "Error: Container did not become active within ${poll_max}s"
+    if ! $container_active; then
+        log_demo "$name" "Error: Container did not start successfully within ${poll_max}s"
         log_demo "$name" "--- machine-${name}.service state ---"
         systemctl show "machine-${name}.service" --property=ActiveState,SubState,ExecMainStatus 2>&1 || true
         log_demo "$name" "--- systemd-nspawn@${name}.service state ---"
@@ -666,6 +676,11 @@ build_demo() {
         journalctl -u "machine-${name}.service" --no-pager -n 50 2>&1 || true
         log_demo "$name" "--- journalctl _COMM=systemd-nspawn (last 30 lines) ---"
         journalctl _COMM=systemd-nspawn --no-pager -n 30 2>&1 || true
+        log_demo "$name" "--- Full journal for nspawn@${name}.service (last 50 lines) ---"
+        journalctl -u "systemd-nspawn@${name}.service" --no-pager -n 50 2>&1 || true
+        echo "failed" > "$demo_dir/status"
+        _rollback_build_resources "$name"
+        return 1
     fi
 
     # Regenerate nginx
@@ -673,6 +688,10 @@ build_demo() {
     if [ -x "$SCRIPT_DIR/nginx-gen.sh" ]; then
         bash "$SCRIPT_DIR/nginx-gen.sh"
     fi
+
+    # Apply network isolation rules (global, idempotent)
+    log_demo "$name" "Ensuring network isolation rules..."
+    add_container_isolation
 
     echo "running" > "$demo_dir/status"
     rm -f "$demo_dir/build.pid"  # Build complete, clear PID
@@ -795,6 +814,7 @@ cmd_rebuild() {
             VOLATILE)      volatile="$value" ;;
             RAM_IMAGE)     ram_image=$value ;;
             BUILD_ON_DISK) build_on_disk=$value ;;
+            SKIP_INSTALL)  skip_install=$value ;;
             LOCAL_VARS)    local_vars="$value" ;;
             WILDCARD)      wildcard=$value ;;
             DESCRIPTION)   description="$value" ;;
@@ -808,6 +828,7 @@ cmd_rebuild() {
     [ -n "${volatile:-}" ] && add_args+=("--volatile" "${volatile:-state}")
     [ "${ram_image:-true}" = "false" ] && add_args+=("--disk-backed")
     [ "${build_on_disk:-false}" = "true" ] && add_args+=("--build-on-disk")
+    [ "${skip_install:-false}" = "true" ] && add_args+=("--skip-install")
     [ -n "${local_vars:-}" ] && add_args+=("--local-vars" "$local_vars")
     [ "${wildcard:-false}" = "true" ] && add_args+=("--wildcard")
     [ -n "${description:-}" ] && add_args+=("--description" "$description")

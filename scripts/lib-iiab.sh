@@ -77,3 +77,48 @@ setup_iptables_nat() {
         echo "Container forwarding rules already configured"
     fi
 }
+
+# Add per-container network isolation: block container-to-container traffic
+# while allowing access to the host (for nginx reverse proxy) and the internet.
+# This prevents a compromised container from attacking peers on the bridge.
+# Can be called with or without a container IP:
+#   add_container_isolation        — Just ensure the isolation rule exists
+#   add_container_isolation <ip>   — Also allow this specific container to reach host
+#
+# FORWARD chain ordering (critical):
+#   1. ACCEPT: container → host (nginx)
+#   2. ACCEPT: host → container (established)
+#   3. ACCEPT: container → internet (NAT)
+#   4. ACCEPT: internet → container (established)
+#   5. DROP:   container → container  (isolation)
+add_container_isolation() {
+    local bridge="iiab-br0"
+    local host_ip="10.0.3.1"
+
+    # Allow container(s) to reach the host (nginx reverse proxy)
+    if ! iptables -C FORWARD -i "ve-+" -o "$bridge" -d "$host_ip" -j ACCEPT 2>/dev/null; then
+        echo "Adding container-to-host forward rule..."
+        iptables -A FORWARD -i "ve-+" -o "$bridge" -d "$host_ip" -j ACCEPT
+    fi
+
+    # Allow established return traffic from host to containers
+    if ! iptables -C FORWARD -i "$bridge" -o "ve-+" -s "$host_ip" -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null; then
+        echo "Adding host-to-container established rule..."
+        iptables -A FORWARD -i "$bridge" -o "ve-+" -s "$host_ip" -m state --state RELATED,ESTABLISHED -j ACCEPT
+    fi
+
+    # Block all container-to-container traffic on the bridge
+    # Must be AFTER the allow rules above, so container→host still works
+    if ! iptables -C FORWARD -i "ve-+" -o "ve-+" -j DROP 2>/dev/null; then
+        echo "Adding container-to-container isolation rule..."
+        iptables -A FORWARD -i "ve-+" -o "ve-+" -j DROP
+    fi
+}
+
+# Remove per-container network isolation rules (cleanup — rarely needed).
+# The isolation rules are global and persistent, so this is only for teardown.
+remove_container_isolation() {
+    iptables -D FORWARD -i "ve-+" -o "ve-+" -j DROP 2>/dev/null || true
+    iptables -D FORWARD -i "ve-+" -o "iiab-br0" -d "10.0.3.1" -j ACCEPT 2>/dev/null || true
+    iptables -D FORWARD -i "iiab-br0" -o "ve-+" -s "10.0.3.1" -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
+}

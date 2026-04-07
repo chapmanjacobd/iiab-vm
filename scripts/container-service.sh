@@ -54,6 +54,8 @@ Hostname=${NAME}
 Boot=true
 PrivateUsers=no
 
+NoNewPrivileges=yes
+
 [Network]
 VirtualEthernet=true
 Bridge=iiab-br0
