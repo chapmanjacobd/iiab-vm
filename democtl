@@ -32,19 +32,34 @@ acquire_lock() {
     local timeout="${1:--1}"  # -1 = wait forever, 0 = non-blocking
     eval "exec $LOCK_FD>$LOCK_FILE"
 
-    # Stale lock detection: check if the lock-holding process is alive
+    # Stale lock detection: verify the lock-holding process is actually a democtl
     _try_clean_stale_lock() {
         if [ -f "$LOCK_FILE" ]; then
-            # Try to read PID from lock file (written by previous holder)
             local stale_pid=""
             stale_pid=$(cat "$LOCK_FILE.pid" 2>/dev/null || echo "")
-            if [ -n "$stale_pid" ] && ! kill -0 "$stale_pid" 2>/dev/null; then
-                echo "Warning: Lock held by dead PID $stale_pid, removing stale lock" >&2
-                rm -f "$LOCK_FILE" "$LOCK_FILE.pid"
-                return 0  # Caller should retry
+            if [ -n "$stale_pid" ] && [ "$stale_pid" -gt 1 ] 2>/dev/null; then
+                # Check if process exists
+                if ! kill -0 "$stale_pid" 2>/dev/null; then
+                    echo "Warning: Lock held by dead PID $stale_pid, removing stale lock" >&2
+                    rm -f "$LOCK_FILE" "$LOCK_FILE.pid"
+                    return 0  # Caller should retry
+                fi
+                # Process exists — verify it's actually a democtl process (avoid PID reuse false positives)
+                local cmdline=""
+                cmdline=$(tr '\0' ' ' < "/proc/$stale_pid/cmdline" 2>/dev/null || echo "")
+                if [ -n "$cmdline" ] && ! echo "$cmdline" | grep -q 'democtl'; then
+                    # Process exists but is NOT democtl — likely PID reuse, treat as stale
+                    local lock_age
+                    lock_age=$(( $(date +%s) - $(stat -c%Y "$LOCK_FILE" 2>/dev/null || echo "$(date +%s)") ))
+                    if [ "$lock_age" -gt 300 ]; then  # Only override if lock is > 5 min old
+                        echo "Warning: Lock held by non-democtl PID $stale_pid (age: ${lock_age}s), removing stale lock" >&2
+                        rm -f "$LOCK_FILE" "$LOCK_FILE.pid"
+                        return 0
+                    fi
+                fi
             fi
         fi
-        return 1  # No stale lock or process still alive
+        return 1  # No stale lock or process still alive (and is democtl)
     }
 
     if [ "$timeout" = "0" ]; then
@@ -160,6 +175,14 @@ next_ip() {
         done < <(find "$ACTIVE_DIR" -name ip -type f 2>/dev/null)
     fi
 
+    local used_count=${#used_ips[@]}
+    if [ "$used_count" -gt 0 ]; then
+        local remaining=$(( 253 - used_count ))
+        if [ "$remaining" -lt 10 ]; then
+            echo "Warning: Subnet pool running low — ${used_count}/253 IPs used, ${remaining} remaining" >&2
+        fi
+    fi
+
     for i in $(seq 2 254); do
         local candidate="${SUBNET_BASE}.${i}"
         local in_use=false
@@ -174,7 +197,7 @@ next_ip() {
             return 0
         fi
     done
-    echo "Error: No available IPs in ${DEMO_SUBNET}" >&2
+    echo "Error: No available IPs in ${DEMO_SUBNET} (all 253 addresses in use)" >&2
     return 1
 }
 
@@ -226,7 +249,20 @@ check_resources() {
 
     load_resources
 
+    # All demos need disk space for the build process (base image download + install)
+    # The build creates a ~size_mb image on disk, plus overhead for the base image
+    local build_disk_needed=$(( size_mb + DISK_BASE + DISK_BUFFER ))
+    local disk_avail
+    disk_avail=$(df -m /var/lib/machines 2>/dev/null | awk 'NR==2 {print $4}' || echo 0)
+    if [ "$build_disk_needed" -gt "$disk_avail" ]; then
+        echo "Error: Insufficient disk space for demo '$name' build." >&2
+        echo "  Need: ~${build_disk_needed}MB (image: ${size_mb}MB + base + overhead)" >&2
+        echo "  Available: ${disk_avail}MB" >&2
+        return 1
+    fi
+
     if $ram_image; then
+        # RAM-image demos also need enough RAM to hold the final image
         local ram_avail=$(( RAM_TOTAL - RAM_ALLOCATED - RAM_BUFFER ))
         if [ "$size_mb" -gt "$ram_avail" ]; then
             echo "Error: Insufficient RAM for demo '$name'." >&2
@@ -240,13 +276,14 @@ check_resources() {
             return 1
         fi
     else
-        local disk_avail
-        disk_avail=$(df -m /var/lib/machines 2>/dev/null | awk 'NR==2 {print $4}' || echo 0)
-        local needed=$(( size_mb + DISK_BASE + DISK_BUFFER ))
-        if [ "$needed" -gt "$disk_avail" ]; then
-            echo "Error: Insufficient disk space for demo '$name'." >&2
-            echo "  Need: ~${needed}MB (image: ${size_mb}MB + overhead)" >&2
-            echo "  Available: ${disk_avail}MB" >&2
+        # Non-ram-image demos need persistent disk space for the final image
+        local disk_needed=$(( size_mb + DISK_BASE ))
+        local disk_avail_final
+        disk_avail_final=$(df -m /var/lib/machines 2>/dev/null | awk 'NR==2 {print $4}' || echo 0)
+        if [ "$disk_needed" -gt "$disk_avail_final" ]; then
+            echo "Error: Insufficient disk space for demo '$name' (final image)." >&2
+            echo "  Need: ~${disk_needed}MB (image: ${size_mb}MB + overhead)" >&2
+            echo "  Available: ${disk_avail_final}MB" >&2
             return 1
         fi
     fi
@@ -458,28 +495,36 @@ EOF
 
         # Fork heartbeat watchdog
         (
+            set +e  # Don't exit on errors, handle them gracefully
             local last_size=0
             local stale_count=0
-            local max_stale=6  # 6 checks × 5min = 30 min max staleness
+            local max_stale=12  # 12 checks × 5min = 60 min max staleness
             while kill -0 "$pid" 2>/dev/null; do
                 sleep 300  # Check every 5 minutes
                 if [ -f "$demo_dir/build.log" ]; then
                     local current_size
                     current_size=$(stat -c%s "$demo_dir/build.log" 2>/dev/null || echo 0)
-                    if [ "$current_size" -eq "$last_size" ]; then
+                    if [ "$current_size" -eq "$last_size" ] && [ "$last_size" -gt 0 ]; then
                         stale_count=$((stale_count + 1))
                         if [ "$stale_count" -ge "$max_stale" ]; then
                             echo "[$(date -u +%H:%M:%S)] [watchdog] Build appears hung (no log output in $(( stale_count * 5 )) min). Killing PID $pid" >> "$demo_dir/build.log"
                             kill -TERM "$pid" 2>/dev/null
                             sleep 10
-                            kill -9 "$pid" 2>/dev/null || true
+                            kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
+                            sleep 5
+                            # Wait for build process to actually exit
+                            local wait_count=0
+                            while kill -0 "$pid" 2>/dev/null && [ "$wait_count" -lt 30 ]; do
+                                sleep 1
+                                wait_count=$((wait_count + 1))
+                            done
                             echo "failed" > "$demo_dir/status"
                             # Rollback resources
                             acquire_lock 0 && {
                                 free_resources "$name"
                                 release_lock
                             } || true
-                            rm -f "$demo_dir/build.pid"
+                            rm -f "$demo_dir/build.pid" "$demo_dir/build.watchdog"
                             break
                         fi
                     else
@@ -488,6 +533,8 @@ EOF
                     fi
                 fi
             done
+            # Clean up watchdog file when exiting naturally
+            rm -f "$demo_dir/build.watchdog"
         ) &
         local watchdog_pid=$!
         echo "$watchdog_pid" > "$demo_dir/build.watchdog"
@@ -516,14 +563,25 @@ build_demo() {
     ip=$(cat "$demo_dir/ip")
 
     # Ensure nspawn-loop is available (with lock for concurrent builds)
+    local clone_result=0
     (
         acquire_lock 600  # Wait up to 10 mins for initial clone if needed
         if [ ! -d "$NSPAWN_DIR" ]; then
             log_demo "$name" "Cloning nspawn-loop..."
             mkdir -p "$STATE_DIR"
-            git clone --depth 1 https://github.com/chapmanjacobd/nspawn-loop.git "$NSPAWN_DIR" 2>&1
+            if ! git clone --depth 1 https://github.com/chapmanjacobd/nspawn-loop.git "$NSPAWN_DIR" 2>&1; then
+                echo "CLONE_FAILED"
+                exit 1
+            fi
         fi
-    )
+    ) || clone_result=1
+
+    if [ "$clone_result" -ne 0 ]; then
+        log_demo "$name" "Error: Failed to clone nspawn-loop repository"
+        echo "failed" > "$demo_dir/status"
+        _rollback_build_resources "$name"
+        return 1
+    fi
 
     if [ ! -d "$NSPAWN_DIR" ]; then
         log_demo "$name" "Error: nspawn-loop not found at $NSPAWN_DIR"

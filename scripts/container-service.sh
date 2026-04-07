@@ -28,9 +28,6 @@ while [[ $# -gt 0 ]]; do
                 exit 1
             fi
             ;;
-        --volatile)
-            VOLATILE="yes"
-            ;;
         --ram-image)
             RAM_IMAGE=true
             ;;

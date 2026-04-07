@@ -29,7 +29,10 @@ demo_names=()
 for demo_dir in "$ACTIVE_DIR"/*/; do
     [ -d "$demo_dir" ] || continue
     dname=$(basename "$demo_dir")
-    [ -f "$demo_dir/config" ] || continue
+    if [ ! -f "$demo_dir/config" ]; then
+        echo "Warning: Demo '$dname' has no config file — skipping nginx generation" >&2
+        continue
+    fi
     demo_names+=("$dname")
 done
 

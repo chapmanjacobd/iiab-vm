@@ -151,7 +151,7 @@ iiab-whitelabel/
     └── nginx-gen.sh           # Dynamic nginx from active demos
 ```
 
-**Note**: The `vars/` directory has been removed. Each demo uses `local_vars_*.yml` files from the IIAB repo that gets cloned into the container during build. This ensures the vars match the specific branch/PR being tested.
+**Note**: The `vars/` directory has been removed. Each demo uses `local_vars_*.yml` files from the IIAB repo that gets cloned into the container during build. The `--local-vars` path is **relative to the cloned IIAB repository** — e.g., `vars/local_vars_small.yml` means the file must exist at `vars/local_vars_small.yml` inside the IIAB repo at the specified branch/ref. If you're testing a custom branch that doesn't have these files, the build will fail.
 
 ## Deployment Modes
 

@@ -24,10 +24,12 @@ deploy:
 list:
 	bash democtl list
 
-# Status of all demos (or specify a name)
+# Status of all demos (or specify a name with NAME=)
+#   make status          → list all
+#   make status NAME=small  → status of small
 status:
-	@if [ -n "$(filter-out status,$(MAKECMDGOALS))" ]; then \
-		bash democtl status "$(filter-out status,$(MAKECMDGOALS))"; \
+	@if [ -n "$(NAME)" ]; then \
+		bash democtl status "$(NAME)"; \
 	else \
 		bash democtl list; \
 	fi

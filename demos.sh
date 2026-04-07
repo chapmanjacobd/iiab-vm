@@ -5,6 +5,13 @@
 # Each "demo add" line declares a demo. This file is both valid shell
 # (source it and the demo function collects the entries) and human-readable
 # documentation of what the server should run.
+#
+# --local-vars paths are RELATIVE TO THE IIAB REPO that gets cloned into each
+# container during build. For example, "vars/local_vars_small.yml" means the
+# file must exist at that path inside the upstream IIAB repository
+# (e.g., https://github.com/iiab/iiab/tree/master/vars/local_vars_small.yml).
+# If the file doesn't exist in the repo at the specified branch/ref, the build
+# will fail. Check the IIAB repo for available files before setting this.
 
 # Global defaults (override per-demo with --flag)
 #   --repo          IIAB git repository
