@@ -55,24 +55,15 @@ Installs packages, configures bridge networking, sets up nginx skeleton.
 ```bash
 # Add all three standard demos
 make small medium large
-
-# Or individually
-make small
-make large
 ```
 
-### 3. Check status
-
-```bash
-make list
-make status NAME=small
-```
-
-### 4. Get SSL certs
+### 3. Get SSL certs
 
 ```bash
 make certbot
 ```
+
+> **Tip:** Steps 1–3 can be done in one shot with `make install` (requires root).
 
 ## democtl CLI
 
@@ -86,7 +77,6 @@ democtl status <name>                 Detailed status + build log
 democtl logs <name>                   Build log or container journal
 democtl shell <name>                  Open shell in container
 democtl reload                        Regenerate nginx from active demos
-democtl certbot                       Obtain/renew Let's Encrypt certs
 democtl ramfs <load|unload|status>    Manage tmpfs images
 democtl reconcile                     Fix resource counter drift
 ```
@@ -128,13 +118,15 @@ democtl add small --local-vars vars/local_vars_small.yml --build-on-disk
 The Makefile provides convenience targets for the three standard demos:
 
 ```bash
-make small medium large    # Add all three demos
-make list                  # List all demos
-make status                # Show status of all demos
-make logs NAME=small       # View logs for a demo
-make ramfs-status          # Check RAM usage
-make stop                  # Stop all demos
-make clean                 # Remove everything
+make install             # Full setup: init → add demos → obtain SSL certs
+make small medium large  # Add all three standard demos
+make list                # List all demos
+make status              # Show status of all demos
+make logs NAME=small     # View logs for a demo
+make certbot             # Obtain/renew Let's Encrypt certificates
+make ramfs-status        # Check RAM usage
+make stop                # Stop all demos
+make clean               # Remove everything
 ```
 
 ### Custom demos (README)

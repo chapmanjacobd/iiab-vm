@@ -1088,19 +1088,6 @@ cmd_reload() {
 }
 
 ###############################################################################
-# democtl certbot
-###############################################################################
-cmd_certbot() {
-    ensure_root "$@"
-    if [ -f "$SCRIPT_DIR/certbot-setup.sh" ]; then
-        bash "$SCRIPT_DIR/certbot-setup.sh"
-    else
-        echo "Error: certbot-setup.sh not found at $SCRIPT_DIR" >&2
-        return 1
-    fi
-}
-
-###############################################################################
 # democtl ramfs
 ###############################################################################
 cmd_ramfs() {
@@ -1135,7 +1122,6 @@ Commands:
   logs <name>                   Show build log or container journal
   shell <name>                  Open shell in container
   reload                        Regenerate nginx config from active demos
-  certbot                       Obtain/renew Let's Encrypt certificates
   ramfs <action> [name]         Manage RAM-loaded images (load/unload/status/cleanup)
   reconcile                     Fix resource counter drift and check ghost IPs
 
@@ -1179,7 +1165,6 @@ main() {
         logs)      cmd_logs "$@" ;;
         shell)     cmd_shell "$@" ;;
         reload)    cmd_reload "$@" ;;
-        certbot)   cmd_certbot "$@" ;;
         ramfs)     cmd_ramfs "$@" ;;
         reconcile) cmd_reconcile "$@" ;;
         help|--help|-h) cmd_help ;;
