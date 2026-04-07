@@ -296,12 +296,21 @@ spawn systemd-nspawn --resolv-conf=off -D $env(MOUNT_DIR) -M box --boot
 
 expect "login: " { send "root\r" }
 
-expect -re {#\s?$} { send "/root/run_build.sh || echo 'IIAB_BUILD_FAILED'\r" }
+expect -re {#\s?$} { send "/root/run_build.sh; echo \"BUILD_EXIT_CODE:\$?\"\r" }
 
 expect {
     timeout { puts "\nTimed out waiting for IIAB install"; exit 1 }
-    "IIAB_BUILD_FAILED" { puts "\nIIAB build script failed"; exit 1 }
-    "photographed" { send "\r" }
+    -re "BUILD_EXIT_CODE:(\[0-9\]+)" {
+        set exit_code $expect_out(1,string)
+        if { $exit_code != 0 } {
+            puts "\nIIAB build script failed with exit code: $exit_code"
+            exit 1
+        }
+    }
+    "photographed" {
+        send "\r"
+        exp_continue
+    }
 }
 
 expect "login: " { send "root\r" }
