@@ -299,11 +299,8 @@ spawn systemd-nspawn -q --network-veth --resolv-conf=off -D $env(MOUNT_DIR) -M b
 expect "login: " { send "root\r" }
 expect -re {#\s?$} { send "export PAGER=cat SYSTEMD_PAGER=cat\r" }
 
-# Debian cloud image prep: generate SSH host keys, start sshd
+# Debian cloud image prep: generate SSH host keys (Ansible starts SSH later; needed on Debian)
 expect -re {#\s?$} { send "ssh-keygen -A\r" }
-
-# Start ssh service before build; if it fails, mask it to prevent restart loops
-expect -re {#\s?$} { send "systemctl enable ssh; if ! systemctl start ssh 2>&1; then systemctl mask ssh; fi\r" }
 
 expect -re {#\s?$} { send "/root/run_build.sh; echo \"BUILD_EXIT_CODE:\$?\"\r" }
 
