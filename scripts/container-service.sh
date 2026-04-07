@@ -55,15 +55,14 @@ Hostname=${NAME}
 Boot=true
 PrivateUsers=pick
 NoNewPrivileges=yes
-Capability=CAP_NET_BIND_SERVICE
 SystemCallFilter=@system-service
-SystemCallFilter=~@privileged @resources @reboot @swap @mount @debug @clock @module @raw-io @reboot
+SystemCallFilter=~@privileged @resources @reboot @swap @mount @debug @clock @module @raw-io
 
 [Network]
 VirtualEthernet=yes
 Bridge=iiab-br0
-PrivateNetworking=yes
 
+[Files]
 ${FILES_SECTION}
 EOF
 
@@ -103,15 +102,11 @@ DeviceAllow=char-random rw
 # Privilege restrictions
 NoNewPrivileges=yes
 
-# Namespace & memory restrictions
+# Memory restrictions
 RestrictRealtime=yes
-RestrictNamespaces=yes
 MemoryDenyWriteExecute=yes
 LockPersonality=yes
 RestrictSUIDSGID=yes
-
-# Restrict architecture and personality
-Architecture=native
 EOF
 
 echo "Created ${SERVICE_OVERRIDE}/override.conf"

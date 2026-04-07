@@ -167,7 +167,7 @@ HEADER
         printf '    listen [::]:443 ssl http2 default_server;\n'
         printf '    server_name *.iiab.io;\n\n'
         printf '    ssl_certificate %s;\n' "$fallback_cert"
-        printf '    ssl_certificate_key /etc/letsencrypt/live/%s.iiab.io/privkey.pem;\n' "$fallback_domain"
+        printf '    ssl_certificate_key /etc/letsencrypt/live/%s/privkey.pem;\n' "$fallback_domain"
         printf '    ssl_protocols TLSv1.2 TLSv1.3;\n\n'
         printf '    return 302 https://%s$request_uri;\n' "$fallback_domain"
         printf '}\n'

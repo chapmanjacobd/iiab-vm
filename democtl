@@ -57,6 +57,9 @@ acquire_lock() {
                     local lock_age
                     lock_age=$(( $(date +%s) - $(stat -c%Y "$LOCK_FILE" 2>/dev/null || date +%s) ))
                     if [ "$lock_age" -gt 300 ]; then  # Only override if lock is > 5 min old
+                        # Random sleep to avoid race conditions when multiple processes try to clean the same lock
+                        sleep 0.$(( RANDOM % 10 ))
+                        [ -f "$LOCK_FILE" ] || return 0
                         echo "Warning: Lock held by non-democtl PID $stale_pid (age: ${lock_age}s), removing stale lock" >&2
                         rm -f "$LOCK_FILE" "$LOCK_FILE.pid"
                         return 0
@@ -138,16 +141,43 @@ EOF
 }
 
 load_resources() {
-    # shellcheck source=/dev/null
-    source "$RESOURCE_FILE"
+    # Dynamically calculate allocations from active/pending demos
+    DISK_ALLOCATED=0
+    RAM_ALLOCATED=0
+
+    # Ensure state dirs exist before loading
+    mkdir -p "$STATE_DIR" "$ACTIVE_DIR"
+
+    if [ -d "$ACTIVE_DIR" ]; then
+        for demo_dir in "$ACTIVE_DIR"/*/; do
+            [ -d "$demo_dir" ] || continue
+            if [ -f "$demo_dir/config" ]; then
+                # shellcheck source=/dev/null
+                source "$demo_dir/config"
+                if [ "${RAM_IMAGE:-true}" = "true" ]; then
+                    RAM_ALLOCATED=$(( RAM_ALLOCATED + IMAGE_SIZE_MB ))
+                else
+                    DISK_ALLOCATED=$(( DISK_ALLOCATED + IMAGE_SIZE_MB ))
+                fi
+            fi
+        done
+    fi
+
+    # Total system resources (read-only from file)
+    if [ -f "$RESOURCE_FILE" ]; then
+        # shellcheck source=/dev/null
+        source "$RESOURCE_FILE"
+    else
+        DISK_TOTAL=$(df -m /var/lib/machines 2>/dev/null | awk 'NR==2 {print $2}' || echo 50000)
+        RAM_TOTAL=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
+    fi
 }
 
 save_resources() {
+    # Only save system totals, allocations are dynamic
     cat > "$RESOURCE_FILE" << EOF
 DISK_TOTAL=${DISK_TOTAL:-0}
-DISK_ALLOCATED=${DISK_ALLOCATED:-0}
 RAM_TOTAL=${RAM_TOTAL:-0}
-RAM_ALLOCATED=${RAM_ALLOCATED:-0}
 EOF
 }
 
@@ -277,51 +307,6 @@ check_resources() {
         fi
     fi
     return 0
-}
-
-allocate_resources() {
-    local name="$1"
-    local size_mb="$2"
-    local ram_image="$3"
-
-    load_resources
-    if $ram_image; then
-        RAM_ALLOCATED=$(( RAM_ALLOCATED + size_mb ))
-    else
-        DISK_ALLOCATED=$(( DISK_ALLOCATED + size_mb ))
-    fi
-    save_resources
-}
-
-free_resources() {
-    local name="$1"
-
-    local dir="$ACTIVE_DIR/$name"
-    if [ -f "$dir/config" ]; then
-        # shellcheck source=/dev/null
-        local ram_image=false
-        if grep -q '^RAM_IMAGE=true$' "$dir/config" 2>/dev/null; then
-            ram_image=true
-        fi
-        local size_mb=0
-        if grep -q '^IMAGE_SIZE_MB=' "$dir/config" 2>/dev/null; then
-            size_mb=$(grep '^IMAGE_SIZE_MB=' "$dir/config" | cut -d= -f2)
-        fi
-
-        load_resources
-        if $ram_image; then
-            RAM_ALLOCATED=$(( RAM_ALLOCATED - size_mb ))
-            if [ "$RAM_ALLOCATED" -lt 0 ]; then
-                RAM_ALLOCATED=0
-            fi
-        else
-            DISK_ALLOCATED=$(( DISK_ALLOCATED - size_mb ))
-            if [ "$DISK_ALLOCATED" -lt 0 ]; then
-                DISK_ALLOCATED=0
-            fi
-        fi
-        save_resources
-    fi
 }
 
 ###############################################################################
@@ -512,11 +497,6 @@ EOF
                                 wait_count=$((wait_count + 1))
                             done
                             echo "failed" > "$demo_dir/status"
-                            # Rollback resources
-                            if acquire_lock 0; then
-                                free_resources "$name"
-                                release_lock
-                            fi
                             rm -f "$demo_dir/build.pid" "$demo_dir/build.watchdog"
                             break
                         fi
@@ -562,7 +542,6 @@ build_demo() {
     if ! _validate_script "$build_script"; then
         log_demo "$name" "Error: build-container.sh validation failed"
         echo "failed" > "$demo_dir/status"
-        _rollback_build_resources "$name"
         return 1
     fi
 
@@ -575,8 +554,7 @@ build_demo() {
             log_demo "$name" "Resources no longer available, aborting build"
             release_lock
             echo "failed" > "$demo_dir/status"
-            _rollback_build_resources "$name"
-            return 1
+                return 1
         fi
         release_lock
     fi
@@ -613,7 +591,6 @@ build_demo() {
     if ! bash "$build_script" "${build_args[@]}"; then
         log_demo "$name" "Build FAILED!"
         echo "failed" > "$demo_dir/status"
-        _rollback_build_resources "$name"
         return 1
     fi
 
@@ -641,7 +618,6 @@ build_demo() {
     if [ ! -f "$image_path" ]; then
         log_demo "$name" "Error: Image not found at $image_path"
         echo "failed" > "$demo_dir/status"
-        _rollback_build_resources "$name"
         return 1
     fi
 
@@ -680,7 +656,6 @@ build_demo() {
         log_demo "$name" "--- Full journal for nspawn@${name}.service (last 50 lines) ---"
         journalctl -u "systemd-nspawn@${name}.service" --no-pager -n 50 2>&1 || true
         echo "failed" > "$demo_dir/status"
-        _rollback_build_resources "$name"
         return 1
     fi
 
@@ -697,23 +672,6 @@ build_demo() {
     echo "running" > "$demo_dir/status"
     rm -f "$demo_dir/build.pid"  # Build complete, clear PID
     log_demo "$name" "Demo is now running!"
-}
-
-# Rollback resources when a build fails
-_rollback_build_resources() {
-    local name="$1"
-    local demo_dir="$ACTIVE_DIR/$name"
-
-    # Acquire lock to safely modify resource counters
-    if acquire_lock 0; then
-        free_resources "$name"
-        release_lock
-    else
-        log_demo "$name" "Warning: Could not acquire lock to rollback resources"
-    fi
-
-    # Clean up build PID file
-    rm -f "$demo_dir/build.pid"
 }
 
 ###############################################################################
@@ -749,12 +707,9 @@ cmd_remove() {
         rm -f "$demo_dir/build.pid"
     fi
 
-    # Acquire lock for: read config → free resources → cleanup
+    # Acquire lock for: read config → cleanup
     acquire_lock 0 || return 1
     trap release_lock EXIT
-
-    # Free resources (under lock)
-    free_resources "$name"
 
     # Remove from RAMFS if loaded
     if [ -x "$SCRIPT_DIR/ramfs-setup.sh" ]; then

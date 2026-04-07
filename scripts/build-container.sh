@@ -130,10 +130,10 @@ cleanup() {
         echo "Warning: Loop device $LOOPDEV still attached — detaching" >&2
         losetup --detach "$LOOPDEV" 2>/dev/null || true
     fi
-    # For non-RAM builds from RAM, clean up the tmpfs entirely
-    if $TMPFS_MOUNTED && ! $RAM_IMAGE && mountpoint -q "${BUILD_DIR%/*}" 2>/dev/null; then
-        echo "Cleaning up build tmpfs..."
-        umount "${BUILD_DIR%/*}" 2>/dev/null || true
+    # For non-RAM builds from RAM, clean up only our own build tmpfs
+    if $TMPFS_MOUNTED && ! $RAM_IMAGE && mountpoint -q "$BUILD_DIR" 2>/dev/null; then
+        echo "Cleaning up build tmpfs for $NAME..."
+        umount "$BUILD_DIR" 2>/dev/null || true
     fi
 }
 trap cleanup EXIT
