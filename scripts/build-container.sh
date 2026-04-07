@@ -251,8 +251,9 @@ fi
 # Set hostname
 echo "$NAME" > "$MOUNT_DIR/etc/hostname"
 
-# Disable WiFi/hostapd
+# Container and hardware-specific overrides
 cat >> "$MOUNT_DIR/etc/iiab/local_vars.yml" << 'EOF'
+is_proot: True
 # Disabled for container deployment
 hostapd_install: False
 hostapd_enabled: False
