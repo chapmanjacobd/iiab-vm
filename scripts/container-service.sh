@@ -55,8 +55,6 @@ Hostname=${NAME}
 Boot=true
 PrivateUsers=yes
 NoNewPrivileges=yes
-SystemCallFilter=@system-service
-SystemCallFilter=~@privileged @resources @reboot @swap @mount @debug @clock @module @raw-io
 
 [Network]
 VirtualEthernet=yes
