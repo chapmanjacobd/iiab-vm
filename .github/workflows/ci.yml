@@ -10,7 +10,7 @@ jobs:
   shellcheck:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install shellcheck
         run: sudo apt-get install -y shellcheck
       - name: Run shellcheck
@@ -21,7 +21,7 @@ jobs:
   unit-tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Validate scripts syntax
         run: |
           bash -n democtl
@@ -35,50 +35,37 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+
       - name: System prep
         run: |
           sudo apt-get update
           sudo apt-get install -y systemd-container debootstrap parted jq e2fsprogs dosfstools psmisc iptables bridge-utils expect curl git
+
       - name: Restore base image cache
         id: cache-base-image
         uses: actions/cache@v4
         with:
           path: base-image.raw
           key: debian-13-base-image
+
       - name: Prep base image
         run: |
           sudo mkdir -p /var/lib/iiab-demos
           if [ -f base-image.raw ]; then
             sudo cp base-image.raw /var/lib/iiab-demos/debian-13-generic-amd64.raw
           fi
+
       - name: Initialize host
         run: sudo ./democtl init
+
       - name: Build unittest demo
         run: |
-          # Create minimal test vars file
-          cat > /tmp/local_vars_unittest.yml << 'EOF'
-          # Minimal IIAB config for unittest
-          iiab_install_kiwix: False
-          iiab_install_kalite: False
-          iiab_install_osm_maps: False
-          iiab_install_pathagar: False
-          iiab_install_phet: False
-          iiab_install_sugar_on_debian: False
-          iiab_install_epubnet: False
-          hostapd_install: False
-          hostapd_enabled: False
-          captiveportal_install: False
-          captiveportal_enabled: False
-          iiab_admin_user_install: False
-          EOF
-
-          # Use a larger size (4000MB) to fit the 3GB base image in the tmpfs build directory
           sudo ./democtl add unittest \
             --size 4000 \
-            --local-vars /tmp/local_vars_unittest.yml \
-            --no-ram-image \
+            --local-vars vars/local_vars_unittest.yml \
             --fg
+
       - name: Save base image for cache
         if: steps.cache-base-image.outputs.cache-hit != 'true'
         run: |
@@ -86,6 +73,7 @@ jobs:
             sudo cp /var/lib/iiab-demos/debian-13-generic-amd64.raw base-image.raw
             sudo chown runner:runner base-image.raw
           fi
+
       - name: Verify build
         run: |
           sudo ./democtl list

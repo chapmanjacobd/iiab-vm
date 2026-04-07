@@ -248,7 +248,6 @@ fi
 # Set image-building flag so services know they're building an image (not running live)
 # This prevents service restarts during build and lets them use 'stopped' instead
 echo "rpi_image: True" >> "$MOUNT_DIR/etc/iiab/local_vars.yml"
-sed -i 's/^iiab_admin_user_install: True/iiab_admin_user_install: False/' "$MOUNT_DIR/etc/iiab/local_vars.yml"
 
 # Set hostname
 echo "$NAME" > "$MOUNT_DIR/etc/hostname"
