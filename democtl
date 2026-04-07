@@ -382,6 +382,11 @@ cmd_add() {
         esac
     done
 
+    # Normalize repo URL: add https:// if missing
+    if [[ "$repo" == github.com/* ]]; then
+        repo="https://$repo"
+    fi
+
     if [ -z "$name" ]; then
         echo "Error: demo name required" >&2
         echo "Usage: democtl add <name> [--branch <branch>] ..." >&2

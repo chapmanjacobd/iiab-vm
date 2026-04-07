@@ -48,6 +48,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Normalize repo URL: add https:// if missing
+if [[ "$IIAB_REPO" == github.com/* ]]; then
+    IIAB_REPO="https://$IIAB_REPO"
+fi
+
 # Validate required args
 if [ -z "$NAME" ]; then
     echo "Error: --name required" >&2
