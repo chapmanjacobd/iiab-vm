@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt-get install -y shellcheck
+      - name: Run shellcheck
+        run: |
+          shellcheck democtl
+          shellcheck scripts/*.sh
+
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate scripts syntax
+        run: |
+          bash -n democtl
+          for f in scripts/*.sh; do bash -n "$f"; done
+      - name: Test democtl help
+        run: ./democtl help
+      - name: Test democtl list (empty)
+        run: sudo ./democtl list
+
+  build-unittest:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/master'
+    steps:
+      - uses: actions/checkout@v4
+      - name: System prep
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y systemd-container debootstrap parted jq e2fsprogs dosfstools psmisc iptables bridge-utils expect curl git
+      - name: Restore base image cache
+        id: cache-base-image
+        uses: actions/cache@v4
+        with:
+          path: base-image.raw
+          key: debian-13-base-image
+      - name: Prep base image
+        run: |
+          sudo mkdir -p /var/lib/iiab-demos
+          if [ -f base-image.raw ]; then
+            sudo cp base-image.raw /var/lib/iiab-demos/debian-13-generic-amd64.raw
+          fi
+      - name: Initialize host
+        run: sudo ./democtl init
+      - name: Build unittest demo
+        run: |
+          # Use a small size and the unittest config from the IIAB repo
+          sudo ./democtl add unittest \
+            --edition unittest \
+            --size 2000 \
+            --local-vars vars/local_vars_unittest.yml \
+            --no-ram-image \
+            --fg
+      - name: Save base image for cache
+        if: steps.cache-base-image.outputs.cache-hit != 'true'
+        run: |
+          if [ -f /var/lib/iiab-demos/debian-13-generic-amd64.raw ]; then
+            sudo cp /var/lib/iiab-demos/debian-13-generic-amd64.raw base-image.raw
+            sudo chown runner:runner base-image.raw
+          fi
+      - name: Verify build
+        run: |
+          sudo ./democtl list
+          sudo ./democtl status unittest
+          # Check if the image exists
+          ls -lh /var/lib/machines/unittest.raw

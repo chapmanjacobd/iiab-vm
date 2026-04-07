@@ -82,6 +82,17 @@ reload:
 certbot:
 	bash democtl certbot
 
+# Testing
+test:
+	@echo "Checking syntax..."
+	bash -n democtl
+	for f in scripts/*.sh; do bash -n "$$f"; done
+	@echo "Running shellcheck..."
+	shellcheck democtl scripts/*.sh
+	@echo "Testing help..."
+	bash democtl help >/dev/null
+	@echo "All local tests passed."
+
 # RAMFS management
 ramfs-load:
 	bash democtl ramfs load
