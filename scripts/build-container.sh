@@ -399,8 +399,13 @@ PART_INFO=$(parted -m --script "$LOOPDEV" unit B print | grep "^1:")
 ROOTFS_PARTSTART=$(echo "$PART_INFO" | awk -F ":" '{print $2}' | tr -d 'B')
 ROOTFS_PARTNEWEND=$((ROOTFS_PARTSTART + TOTAL_REQUIRED_SIZE - 1))
 
-# Fix GPT backup location to avoid interactive prompt during resizepart
-sgdisk -e "$LOOPDEV" >/dev/null 2>&1 || true
+# Fix GPT backup location to avoid interactive prompt during resizepart.
+# Must detach loop device so kernel re-reads the corrected partition table.
+losetup --detach "$LOOPDEV"
+LOOPDEV=""
+sgdisk -e "$WORK_IMG" >/dev/null 2>&1 || true
+LOOPDEV=$(losetup --find --show --partscan "$WORK_IMG")
+PARTDEV="${LOOPDEV}p1"
 sync
 
 echo "Resizing partition to ${ROOTFS_PARTNEWEND}..."
