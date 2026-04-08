@@ -471,19 +471,22 @@ echo "Sector size: $SECTOR_SIZE"
 echo "Filesystem: $(( ROOTFS_PARTSIZE / 1024 / 1024 ))MB, target partition: $(( TARGET_PARTITION_SIZE / 1024 / 1024 ))MB"
 
 # Recreate partition 1 at exact target size using sgdisk (avoids parted's interactive GPT prompt)
-PART_START_SECTOR=$(sgdisk -i 1 "$LOOPDEV" 2>/dev/null | awk '/^First sector/ {print $NF}')
+SGDISK_INFO=$(sgdisk -i 1 "$LOOPDEV" 2>/dev/null || true)
+PART_START_SECTOR=$(echo "$SGDISK_INFO" | awk '/^First sector:/ {print $3}')
+# GUID is field 4: "Partition GUID code: UUID (description)"
+PART_TYPE_CODE=$(echo "$SGDISK_INFO" | awk '/^Partition GUID code:/ {print $4}')
+
 TARGET_SECTORS=$((TARGET_PARTITION_SIZE / SECTOR_SIZE))
 PART_END_SECTOR=$((PART_START_SECTOR + TARGET_SECTORS - 1))
-PART_GUID=$(sgdisk -i 1 "$LOOPDEV" 2>/dev/null | awk '/^Partition GUID code/ {print $NF}')
 
-echo "Recreating partition 1: sector ${PART_START_SECTOR} to ${PART_END_SECTOR} (type: ${PART_GUID:-8300})"
+echo "Recreating partition 1: sector ${PART_START_SECTOR} to ${PART_END_SECTOR} (type: ${PART_TYPE_CODE:-0FC63DAF-8483-4772-8E79-3D69D8477DE4})"
 
 # Move GPT backup to current end of disk
 sgdisk -e "$LOOPDEV" >/dev/null 2>&1
 # Delete and recreate with exact bounds
 sgdisk -d 1 "$LOOPDEV" >/dev/null 2>&1
 sgdisk -n "1:${PART_START_SECTOR}:${PART_END_SECTOR}" \
-    -t "1:${PART_GUID:-8300}" \
+    -t "1:${PART_TYPE_CODE:-1}" \
     "$LOOPDEV" >/dev/null 2>&1
 
 # Re-read partition table
