@@ -82,10 +82,14 @@ setup_iptables_nat() {
 
     # Use -I FORWARD 1 to ensure rules are above any Docker/system rules
     # Match both ve-+ and vb-+ (some systems use vb- for bridged veth)
-    if ! iptables-save | grep -q "\-i $ext_if.*-o v[be]-+.*ACCEPT" 2>/dev/null; then
+    if ! iptables-save | grep -q "vb-+" 2>/dev/null; then
         echo "Adding container forwarding rules..."
-        iptables -I FORWARD 1 -i "$ext_if" -o "${IIAB_BRIDGE}" -m state --state RELATED,ESTABLISHED -j ACCEPT
-        iptables -I FORWARD 1 -i "${IIAB_BRIDGE}" -o "$ext_if" -j ACCEPT
+        # Inbound (Established)
+        iptables -I FORWARD 1 -i "$ext_if" -o vb-+ -m state --state RELATED,ESTABLISHED -j ACCEPT
+        iptables -I FORWARD 1 -i "$ext_if" -o ve-+ -m state --state RELATED,ESTABLISHED -j ACCEPT
+        # Outbound
+        iptables -I FORWARD 1 -i vb-+ -o "$ext_if" -j ACCEPT
+        iptables -I FORWARD 1 -i ve-+ -o "$ext_if" -j ACCEPT
     else
         echo "Container forwarding rules already configured"
     fi
@@ -107,28 +111,34 @@ add_container_isolation() {
     # We insert them in reverse order of desired precedence.
 
     # 3. Block all container-to-container traffic on the bridge
-    if ! iptables-save | grep -q "\-i $bridge.*-o $bridge.*DROP" 2>/dev/null; then
+    if ! iptables-save | grep -q "\-o vb-+.*DROP" 2>/dev/null; then
         echo "Adding container-to-container isolation rule..."
-        iptables -I FORWARD 1 -i "$bridge" -o "$bridge" -j DROP
+        iptables -I FORWARD 1 -i vb-+ -o vb-+ -j DROP
+        iptables -I FORWARD 1 -i ve-+ -o ve-+ -j DROP
     fi
 
     # 2. Allow host to reach container(s) (needed for nginx reverse proxy and health checks)
-    if ! iptables-save | grep -q "\-d $IIAB_DEMO_SUBNET.*-o $bridge.*ACCEPT" 2>/dev/null; then
+    if ! iptables-save | grep -q "\-d $IIAB_DEMO_SUBNET.*ACCEPT" 2>/dev/null; then
         echo "Adding host-to-container forward rule..."
-        iptables -I FORWARD 1 -d "$IIAB_DEMO_SUBNET" -o "$bridge" -j ACCEPT
+        iptables -I FORWARD 1 -d "$IIAB_DEMO_SUBNET" -o vb-+ -j ACCEPT
+        iptables -I FORWARD 1 -d "$IIAB_DEMO_SUBNET" -o ve-+ -j ACCEPT
     fi
 
     # 1. Allow container(s) to reach the host (nginx reverse proxy)
-    if ! iptables-save | grep -q "\-i $bridge.*-d $host_ip.*ACCEPT" 2>/dev/null; then
+    if ! iptables-save | grep -q "\-d $host_ip.*ACCEPT" 2>/dev/null; then
         echo "Adding container-to-host forward rule..."
-        iptables -I FORWARD 1 -i "$bridge" -d "$host_ip" -j ACCEPT
+        iptables -I FORWARD 1 -i vb-+ -o "$bridge" -d "$host_ip" -j ACCEPT
+        iptables -I FORWARD 1 -i ve-+ -o "$bridge" -d "$host_ip" -j ACCEPT
     fi
 }
 
 # Remove per-container network isolation rules (cleanup -- rarely needed).
 # The isolation rules are global and persistent, so this is only for teardown.
 remove_container_isolation() {
-    iptables -D FORWARD -i "${IIAB_BRIDGE}" -o "${IIAB_BRIDGE}" -j DROP 2>/dev/null || true
-    iptables -D FORWARD -d "${IIAB_DEMO_SUBNET}" -o "${IIAB_BRIDGE}" -j ACCEPT 2>/dev/null || true
-    iptables -D FORWARD -i "${IIAB_BRIDGE}" -d "${IIAB_GW}" -j ACCEPT 2>/dev/null || true
+    iptables -D FORWARD -i vb-+ -o vb-+ -j DROP 2>/dev/null || true
+    iptables -D FORWARD -i ve-+ -o ve-+ -j DROP 2>/dev/null || true
+    iptables -D FORWARD -d "${IIAB_DEMO_SUBNET}" -o vb-+ -j ACCEPT 2>/dev/null || true
+    iptables -D FORWARD -d "${IIAB_DEMO_SUBNET}" -o ve-+ -j ACCEPT 2>/dev/null || true
+    iptables -D FORWARD -i vb-+ -o "${IIAB_BRIDGE}" -d "${IIAB_GW}" -j ACCEPT 2>/dev/null || true
+    iptables -D FORWARD -i ve-+ -o "${IIAB_BRIDGE}" -d "${IIAB_GW}" -j ACCEPT 2>/dev/null || true
 }
