@@ -293,6 +293,14 @@ EOF
 cat >> "$MOUNT_DIR/etc/iiab/local_vars.yml" << 'EOF'
 is_VM: True
 iiab_admin_user_install: False
+sshd_install: False
+sshd_enabled: False
+tailscale_install: False
+tailscale_enabled: False
+remoteit_install: False
+remoteit_enabled: False
+transmission_install: False
+transmission_enabled: False
 EOF
 
 ###############################################################################

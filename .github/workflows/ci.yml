@@ -26,10 +26,39 @@ jobs:
         run: |
           bash -n democtl
           for f in scripts/*.sh; do bash -n "$f"; done
+          for f in tests/*.sh; do bash -n "$f"; done
       - name: Test democtl help
         run: ./democtl help
       - name: Test democtl list (empty)
         run: sudo ./democtl list
+
+  concurrency-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run concurrency tests
+        run: sudo bash tests/test-concurrency.sh
+
+  e2e-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run e2e tests
+        run: sudo bash tests/test-e2e.sh
+
+  nginx-gen-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run nginx generation tests
+        run: sudo bash tests/test-nginx-gen.sh
+
+  iptables-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run iptables isolation tests
+        run: sudo bash tests/test-iptables.sh
 
   build-unittest:
     runs-on: ubuntu-latest

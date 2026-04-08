@@ -1,7 +1,7 @@
 # IIAB Whitelabel Demo Server
 # CLI wrapper with convenience targets
 
-.PHONY: help init install small medium large status test stop clean
+.PHONY: help init install small medium large status test test-concurrency test-e2e test-nginx test-iptables test-all stop clean
 
 # Default target
 help:
@@ -53,6 +53,34 @@ test:
 	@echo "Testing help..."
 	bash democtl help >/dev/null
 	@echo "All local tests passed."
+
+# Individual test targets
+test-concurrency:
+	@echo "Running concurrency tests..."
+	bash tests/test-concurrency.sh
+
+test-e2e:
+	@echo "Running e2e tests..."
+	bash tests/test-e2e.sh
+
+test-nginx:
+	@echo "Running nginx generation tests..."
+	bash tests/test-nginx-gen.sh
+
+test-iptables:
+	@echo "Running iptables isolation tests..."
+	bash tests/test-iptables.sh
+
+# Run all tests
+test-all: test
+	@echo ""
+	@echo "=== Running all test suites ==="
+	bash tests/test-concurrency.sh
+	bash tests/test-e2e.sh
+	bash tests/test-nginx-gen.sh
+	bash tests/test-iptables.sh
+	@echo ""
+	@echo "✅ All test suites completed successfully."
 
 # Stop all running demos
 stop:
