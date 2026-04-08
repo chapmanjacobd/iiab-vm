@@ -158,6 +158,7 @@ setup_nftables_nat() {
 #   2. bridge table (L2): Handles intra-bridge isolation (peer-to-peer)
 add_container_isolation() {
     local subnet="${IIAB_DEMO_SUBNET}"
+    local bridge="${IIAB_BRIDGE}"
 
     # 1. L3 (inet) rules for Host/Internet access
     nft add table inet iiab 2>/dev/null || true
