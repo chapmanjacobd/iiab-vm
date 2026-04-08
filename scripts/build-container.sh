@@ -464,41 +464,32 @@ TARGET_PARTITION_SIZE=$((ROOTFS_PARTSIZE + BUFFER_SIZE))
 ALIGN=$((1024 * 1024))
 TARGET_PARTITION_SIZE=$(( ((TARGET_PARTITION_SIZE + ALIGN - 1) / ALIGN) * ALIGN ))
 
-# Get device sector size for alignment verification
+# Get device sector size
 SECTOR_SIZE=$(blockdev --getss "$LOOPDEV" 2>/dev/null || echo 512)
 echo "Sector size: $SECTOR_SIZE"
 
 echo "Filesystem: $(( ROOTFS_PARTSIZE / 1024 / 1024 ))MB, target partition: $(( TARGET_PARTITION_SIZE / 1024 / 1024 ))MB"
 
-# Get partition start offset
-PART_INFO=$(parted -m --script "$LOOPDEV" unit B print | grep "^1:")
-ROOTFS_PARTSTART=$(echo "$PART_INFO" | awk -F ":" '{print $2}' | tr -d 'B')
-ROOTFS_PARTNEWEND=$((ROOTFS_PARTSTART + TARGET_PARTITION_SIZE - 1))
+# Recreate partition 1 at exact target size using sgdisk (avoids parted's interactive GPT prompt)
+PART_START_SECTOR=$(sgdisk -i 1 "$LOOPDEV" 2>/dev/null | awk '/^First sector/ {print $NF}')
+TARGET_SECTORS=$((TARGET_PARTITION_SIZE / SECTOR_SIZE))
+PART_END_SECTOR=$((PART_START_SECTOR + TARGET_SECTORS - 1))
+PART_GUID=$(sgdisk -i 1 "$LOOPDEV" 2>/dev/null | awk '/^Partition GUID code/ {print $NF}')
 
-echo "Resizing partition 1 to end at byte ${ROOTFS_PARTNEWEND}..."
-PART_TYPE=$(blkid -o value -s PTTYPE "$WORK_IMG")
-export PARTED_DEVICE="$LOOPDEV"
-export PARTED_NEW_END="$ROOTFS_PARTNEWEND"
-expect <<'EXPECT_EOF' >/dev/null 2>&1 || true
-set timeout 180
-spawn parted ---pretend-input-tty $env(PARTED_DEVICE) unit b resizepart 1 $env(PARTED_NEW_END)
-expect {
-    # When shrinking, parted may offer to "fix" GPT to use ALL remaining space.
-    # We want to Ignore that and keep our resize target.
-    -re "(?i)fix" { send "Ignore\r"; exp_continue }
-    -re "(?i)continue" { send "Yes\r"; exp_continue }
-    eof
-}
-EXPECT_EOF
+echo "Recreating partition 1: sector ${PART_START_SECTOR} to ${PART_END_SECTOR} (type: ${PART_GUID:-8300})"
 
+# Move GPT backup to current end of disk
+sgdisk -e "$LOOPDEV" >/dev/null 2>&1
+# Delete and recreate with exact bounds
+sgdisk -d 1 "$LOOPDEV" >/dev/null 2>&1
+sgdisk -n "1:${PART_START_SECTOR}:${PART_END_SECTOR}" \
+    -t "1:${PART_GUID:-8300}" \
+    "$LOOPDEV" >/dev/null 2>&1
+
+# Re-read partition table
 sync
-partprobe "$LOOPDEV" 2>/dev/null || true
+partx -u "$LOOPDEV" 2>/dev/null || partprobe "$LOOPDEV" 2>/dev/null || true
 udevadm settle 2>/dev/null || sleep 2
-
-# Re-read the actual partition end after parted may have adjusted it
-PART_INFO_AFTER=$(parted -m --script "$LOOPDEV" unit B print | grep "^1:")
-ROOTFS_PARTNEWEND=$(echo "$PART_INFO_AFTER" | awk -F ":" '{print $3}' | tr -d 'B')
-echo "Actual partition end: $ROOTFS_PARTNEWEND"
 
 # Expand filesystem to fill the (now smaller) partition
 echo "Expanding filesystem to fill resized partition..."
@@ -513,14 +504,11 @@ tune2fs -m 1 "$PARTDEV" >/dev/null 2>&1
 losetup --detach "$LOOPDEV"
 LOOPDEV=""
 
-# Get partition type and compute truncation size using sector-aligned actual partition end
+# Compute truncation size: partition end + alignment + GPT backup
 PART_TYPE=$(blkid -o value -s PTTYPE "$WORK_IMG")
-NEW_SIZE=$((ROOTFS_PARTNEWEND + ALIGN))
-# Align NEW_SIZE to sector boundary
-SECTOR_SIZE=$((SECTOR_SIZE + 0))  # Ensure numeric
-if [ "$SECTOR_SIZE" -gt 0 ] 2>/dev/null; then
-    NEW_SIZE=$(( ((NEW_SIZE + SECTOR_SIZE - 1) / SECTOR_SIZE) * SECTOR_SIZE ))
-fi
+NEW_SIZE=$(( (PART_END_SECTOR + 1) * SECTOR_SIZE ))
+# Align to 1 MiB boundary
+NEW_SIZE=$(( ((NEW_SIZE + ALIGN - 1) / ALIGN) * ALIGN ))
 if [[ "$PART_TYPE" == "gpt" ]]; then
     NEW_SIZE=$((NEW_SIZE + 1048576))  # GPT backup header (~1MB at end)
 fi
