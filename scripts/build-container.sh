@@ -345,9 +345,11 @@ else
     # Set up NAT/masquerade and isolation rules
     EXT_IF=$(ip route | grep default | awk '{print $5}' | head -n1)
     if [ -n "$EXT_IF" ]; then
-        # Allow forwarding for IIAB bridge (Docker sets FORWARD policy DROP, must allow explicitly)
-        iptables -I FORWARD 1 -i "$IIAB_BRIDGE" -j ACCEPT 2>/dev/null || true
-        iptables -I FORWARD 2 -o "$IIAB_BRIDGE" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
+        # Docker sets FORWARD policy DROP; insert allow rules for IIAB bridge if needed
+        if iptables-save -t filter 2>/dev/null | grep -q "^:FORWARD DROP"; then
+            iptables -I FORWARD 1 -i "$IIAB_BRIDGE" -j ACCEPT 2>/dev/null || true
+            iptables -I FORWARD 2 -o "$IIAB_BRIDGE" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
+        fi
 
         setup_nftables_nat "$EXT_IF"
         add_container_isolation
@@ -380,15 +382,6 @@ expect -re {#\s?$} { send "ip addr add $env(IIAB_IP)/24 dev host0\r" }
 expect -re {#\s?$} { send "ip link set host0 up\r" }
 expect -re {#\s?$} { send "ip route add default via $env(IIAB_GW)\r" }
 expect -re {#\s?$} { send "rm -f /etc/resolv.conf && printf 'nameserver 8.8.8.8\\nnameserver 1.1.1.1\\n' > /etc/resolv.conf\r" }
-
-# Debug: check networking
-expect -re {#\s?$} { send "ip addr\r" }
-expect -re {#\s?$} { send "ip route\r" }
-expect -re {#\s?$} { send "cat /etc/resolv.conf\r" }
-expect -re {#\s?$} { send "ping -c1 -W2 8.8.8.8\r" }
-
-# Debug on host side: check FORWARD policy and NAT
-system "echo '=== iptables backend ==='; update-alternatives --display iptables 2>/dev/null | grep best || iptables --version; echo '=== FORWARD policy ==='; sudo iptables -L FORWARD -n -v 2>/dev/null | head -30; echo '=== NAT rules ==='; sudo iptables -t nat -L POSTROUTING -n -v 2>/dev/null | head -20; echo '=== nftables ==='; sudo nft list ruleset 2>/dev/null | head -60; echo '=== veth interfaces ==='; ip addr | grep -E 'iiab|veth|vz|ve-|vb-' || true; echo '=== Bridge ==='; bridge link show 2>/dev/null || brctl show 2>/dev/null || true"
 
 # Debian cloud image prep: generate SSH host keys (Ansible starts SSH later; needed on Debian)
 expect -re {#\s?$} { send "ssh-keygen -A\r" }

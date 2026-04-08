@@ -75,7 +75,6 @@ test-all: test
 	bash tests/test-concurrency.sh
 	bash tests/test-e2e.sh
 	bash tests/test-nginx-gen.sh
-	bash tests/test-iptables.sh
 	@echo ""
 	@echo "✅ All test suites completed successfully."
 

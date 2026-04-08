@@ -157,9 +157,11 @@ EXT_IF=$(ip route | grep default | awk '{print $5}' | head -n1)
 if [ -z "$EXT_IF" ]; then
     echo "Warning: Could not detect external interface, skipping networking" >&2
 else
-    # Allow forwarding for IIAB bridge (Docker sets FORWARD policy DROP, must allow explicitly)
-    iptables -I FORWARD 1 -i "$IIAB_BRIDGE" -j ACCEPT 2>/dev/null || true
-    iptables -I FORWARD 2 -o "$IIAB_BRIDGE" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
+    # Docker sets FORWARD policy DROP; insert allow rules for IIAB bridge if needed
+    if iptables-save -t filter 2>/dev/null | grep -q "^:FORWARD DROP"; then
+        iptables -I FORWARD 1 -i "$IIAB_BRIDGE" -j ACCEPT 2>/dev/null || true
+        iptables -I FORWARD 2 -o "$IIAB_BRIDGE" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
+    fi
 
     setup_nftables_nat "$EXT_IF"
     add_container_isolation
