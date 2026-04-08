@@ -317,11 +317,12 @@ if $SKIP_INSTALL; then
     echo "nameserver 8.8.8.8" > "$MOUNT_DIR/etc/resolv.conf"
 
     # Quick boot test to generate SSH keys and lock root
-    export MOUNT_DIR
+    setup_bridge
+    export MOUNT_DIR IIAB_BRIDGE
     expect << 'EXPECT_EOF'
 set timeout 60
 
-spawn systemd-nspawn -q --network-veth --resolv-conf=off -D $env(MOUNT_DIR) -M box --boot
+spawn systemd-nspawn -q --network-bridge=$env(IIAB_BRIDGE) --resolv-conf=off -D $env(MOUNT_DIR) -M box --boot
 
 expect "login: " { send "root\r" }
 expect -re {#\s?$} { send "ssh-keygen -A\r" }
@@ -334,13 +335,15 @@ else
     echo "=== Step 3: Running IIAB installer (this takes 30-60 minutes) ==="
 
     # Network setup
-    systemctl is-active --quiet systemd-networkd || systemctl start systemd-networkd
-    systemctl is-active --quiet systemd-resolved || systemctl start systemd-resolved
+    setup_bridge
     sysctl -w net.ipv4.ip_forward=1
 
-    # Set up NAT/masquerade for the veth interface so the container has internet
+    # Set up NAT/masquerade and isolation rules
     EXT_IF=$(ip route | grep default | awk '{print $5}' | head -n1)
-    setup_nftables_nat "$EXT_IF"
+    if [ -n "$EXT_IF" ]; then
+        setup_nftables_nat "$EXT_IF"
+        add_container_isolation
+    fi
 
     systemd-firstboot --root="$MOUNT_DIR" --delete-root-password --force
     rm -f "$MOUNT_DIR/etc/resolv.conf"
@@ -357,11 +360,11 @@ chmod 0755 /usr/sbin/iiab
 EOF_SCRIPT
     chmod +x "$MOUNT_DIR/root/run_build.sh"
 
-    export MOUNT_DIR
+    export MOUNT_DIR IIAB_BRIDGE
     expect << 'EXPECT_EOF'
 set timeout 7200
 
-spawn systemd-nspawn -q --network-veth --resolv-conf=off -D $env(MOUNT_DIR) -M box --boot
+spawn systemd-nspawn -q --network-bridge=$env(IIAB_BRIDGE) --resolv-conf=off -D $env(MOUNT_DIR) -M box --boot
 
 expect "login: " { send "root\r" }
 expect -re {#\s?$} { send "export PAGER=cat SYSTEMD_PAGER=cat\r" }

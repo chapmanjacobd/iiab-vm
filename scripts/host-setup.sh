@@ -90,55 +90,7 @@ fi
 ###############################################################################
 # 4. Create container bridge network (idempotent)
 ###############################################################################
-echo ""
-echo "=== Configuring container bridge network ==="
-
-BRIDGE_NETDEV="/etc/systemd/network/${IIAB_BRIDGE}.netdev"
-BRIDGE_NETWORK="/etc/systemd/network/${IIAB_BRIDGE}.network"
-
-# Create netdev file
-netdev_changed=false
-if [ ! -f "$BRIDGE_NETDEV" ]; then
-    echo "Creating bridge netdev config..."
-    cat > "$BRIDGE_NETDEV" << EOF
-[NetDev]
-Name=${IIAB_BRIDGE}
-Kind=bridge
-
-[Bridge]
-DefaultPVID=
-VLANFiltering=false
-EOF
-    netdev_changed=true
-else
-    echo "Bridge netdev config already exists"
-fi
-
-# Create network file
-network_changed=false
-if [ ! -f "$BRIDGE_NETWORK" ]; then
-    echo "Creating bridge network config..."
-    cat > "$BRIDGE_NETWORK" << EOF
-[Match]
-Name=${IIAB_BRIDGE}
-
-[Network]
-Address=${IIAB_GW}/24
-IPForward=yes
-IPMasquerade=yes
-EOF
-    network_changed=true
-else
-    echo "Bridge network config already exists"
-fi
-
-# Restart systemd-networkd only if configs were changed
-if $netdev_changed || $network_changed; then
-    echo "Restarting systemd-networkd to apply bridge config..."
-    systemctl restart systemd-networkd
-else
-    echo "Bridge config unchanged, skipping systemd-networkd restart"
-fi
+setup_bridge
 
 ###############################################################################
 # 5. Deploy nginx configuration (idempotent)

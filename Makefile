@@ -1,7 +1,7 @@
 # IIAB Whitelabel Demo Server
 # CLI wrapper with convenience targets
 
-.PHONY: help init install small medium large status test test-concurrency test-e2e test-nginx test-iptables test-all stop clean
+.PHONY: help init install small medium large status test test-concurrency test-e2e test-nginx test-all stop clean
 
 # Default target
 help:
@@ -67,10 +67,6 @@ test-e2e:
 test-nginx:
 	@echo "Running nginx generation tests..."
 	bash tests/test-nginx-gen.sh
-
-test-iptables:
-	@echo "Running iptables isolation tests..."
-	bash tests/test-iptables.sh
 
 # Run all tests
 test-all: test
