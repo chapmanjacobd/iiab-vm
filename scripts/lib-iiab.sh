@@ -170,15 +170,15 @@ add_container_isolation() {
     nft add rule inet iiab forward ct state established,related accept
 
     # B. Allow container -> Host and Internet (NAT)
-    nft add rule inet iiab forward iifname "{ ve-*, vb-* }" accept
+    nft add rule inet iiab forward iifname "{ $bridge, ve-*, vb-* }" accept
 
     # C. Allow host -> container (for reverse proxy and health checks)
-    nft add rule inet iiab forward ip daddr "$subnet" oifname "{ ve-*, vb-* }" accept
+    nft add rule inet iiab forward oifname "{ $bridge, ve-*, vb-* }" ip daddr "$subnet" accept
 
     # Input rules (to allow containers to reach host services like DNS/Nginx)
     nft add chain inet iiab input '{ type filter hook input priority filter - 1; policy accept; }'
     nft flush chain inet iiab input
-    nft add rule inet iiab input iifname "{ ve-*, vb-* }" accept
+    nft add rule inet iiab input iifname "{ $bridge, ve-*, vb-* }" accept
     nft add rule inet iiab input ct state established,related accept
 
     # 2. L2 (bridge) rules for intra-bridge isolation
