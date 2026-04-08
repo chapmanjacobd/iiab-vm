@@ -129,7 +129,7 @@ release_lock() {
 ###############################################################################
 
 ensure_state_dirs() {
-    mkdir -p "$STATE_DIR" "$ACTIVE_DIR"
+    mkdir -p "$STATE_DIR" "$ACTIVE_DIR" /var/lib/machines
     if [ ! -f "$RESOURCE_FILE" ]; then
         local disk_total ram_total
         disk_total=$(df -m /var/lib/machines 2>/dev/null | awk 'NR==2 {print $2}' || echo 50000)
