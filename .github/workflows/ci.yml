@@ -77,7 +77,7 @@ jobs:
 
       - name: Build unittest demo
         run: |
-          sudo ./democtl build unittest --start --skip-install \
+          sudo ./democtl build unittest --start \
             --size 4000 \
             --local-vars vars/local_vars_unittest.yml \
             --fg --repo github.com/chapmanjacobd/iiab --branch rpi_image/genericvm
@@ -91,7 +91,30 @@ jobs:
 
       - name: Verify container responds via HTTP
         run: |
-          # Curl the container's IP directly to verify it's actually running
+          # Wait for container's web server to be ready (may take a few seconds after container starts)
+          echo "Waiting for container HTTP service to be ready..."
+          READY=false
+          for i in $(seq 1 30); do
+            if curl -sS --max-time 5 -o /dev/null http://10.0.3.2/ 2>/dev/null; then
+              READY=true
+              break
+            fi
+            echo "  Attempt $i: Container not ready yet, waiting 2s..."
+            sleep 2
+          done
+
+          if ! $READY; then
+            echo "ERROR: Container HTTP service did not become ready after 60s" >&2
+            echo "Container status:"
+            sudo ./democtl status unittest || true
+            echo "Container service state:"
+            systemctl show "systemd-nspawn@unittest.service" --property=ActiveState,SubState,ExecMainStatus 2>&1 || true
+            echo "Last 20 lines of container journal:"
+            journalctl -u "systemd-nspawn@unittest.service" --no-pager -n 20 2>&1 || true
+            exit 1
+          fi
+
+          echo "Container HTTP service is ready, verifying response..."
           HTTP_CODE=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 http://10.0.3.2/)
           echo "unittest container returned HTTP $HTTP_CODE"
           if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 400 ]; then
