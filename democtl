@@ -558,6 +558,7 @@ build_demo() {
         "--size" "$IMAGE_SIZE_MB"
         "--volatile" "$VOLATILE"
         "--ip" "$ip"
+        "--config" "$demo_dir/config"
     )
 
     if [ "$RAM_IMAGE" = "true" ]; then

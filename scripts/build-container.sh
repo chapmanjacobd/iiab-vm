@@ -28,6 +28,7 @@ LOCAL_VARS=""
 IMAGE_SOURCE=""
 BUILD_ON_DISK=false
 SKIP_INSTALL=false
+CONFIG_PATH=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -43,6 +44,7 @@ while [[ $# -gt 0 ]]; do
         --image-source) IMAGE_SOURCE="$2"; shift 2 ;;
         --build-on-disk) BUILD_ON_DISK=true; shift ;;
         --skip-install) SKIP_INSTALL=true; shift ;;
+        --config)     CONFIG_PATH="$2"; shift 2 ;;
         *)
             echo "Warning: Unknown option: $1" >&2
             shift
@@ -530,7 +532,14 @@ tune2fs -m 1 "$PARTDEV" >/dev/null 2>&1
 losetup --detach "$LOOPDEV"
 LOOPDEV=""
 
-echo "Image shrunk successfully ($(du -sm "$WORK_IMG" | cut -f1)MB)"
+# Update config with actual image size (the --size value was a max, not the real usage)
+ACTUAL_SIZE_MB=$(( ($(stat -c %s "$WORK_IMG") + 1048575) / 1048576 ))  # round up to MB
+if [ -n "$CONFIG_PATH" ] && [ -f "$CONFIG_PATH" ]; then
+    sed -i "s/^IMAGE_SIZE_MB=.*/IMAGE_SIZE_MB=$ACTUAL_SIZE_MB/" "$CONFIG_PATH"
+    echo "Updated config IMAGE_SIZE_MB: $SIZE_MB -> $ACTUAL_SIZE_MB"
+fi
+
+echo "Image shrunk successfully (${ACTUAL_SIZE_MB}MB)"
 
 ###############################################################################
 # Step 5: Register the image
@@ -544,7 +553,7 @@ if $RAM_IMAGE; then
     # Keep image in RAM -- mount /run/iiab-ramfs if needed
     if ! mountpoint -q "/run/iiab-ramfs" 2>/dev/null; then
         mkdir -p "/run/iiab-ramfs"
-        ram_size=$(( SIZE_MB * 11 / 10 ))
+        ram_size=$(( (ACTUAL_SIZE_MB * 11 + 9) / 10 ))  # 10% overhead, rounded up
         echo "Mounting tmpfs at /run/iiab-ramfs (${ram_size}MB)..."
         mount -t tmpfs -o "size=${ram_size}M,mode=0755" tmpfs "/run/iiab-ramfs"
     fi
