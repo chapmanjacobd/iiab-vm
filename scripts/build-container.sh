@@ -342,7 +342,7 @@ else
 
     # Set up NAT/masquerade for the veth interface so the container has internet
     EXT_IF=$(ip route | grep default | awk '{print $5}' | head -n1)
-    setup_iptables_nat "$EXT_IF"
+    setup_nftables_nat "$EXT_IF"
 
     systemd-firstboot --root="$MOUNT_DIR" --delete-root-password --force
     rm -f "$MOUNT_DIR/etc/resolv.conf"

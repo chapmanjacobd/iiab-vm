@@ -53,12 +53,16 @@ jobs:
       - name: Run nginx generation tests
         run: sudo bash tests/test-nginx-gen.sh
 
-  iptables-tests:
+  nftables-tests:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Run iptables isolation tests
-        run: sudo bash tests/test-iptables.sh
+      - name: Install nftables
+        run: sudo apt-get update && sudo apt-get install -y nftables
+      - name: Run nftables isolation tests
+        run: sudo bash tests/test-nftables.sh
+      - name: Run empirical isolation tests
+        run: sudo bash tests/test-isolation-empirical.sh
 
   build-unittest:
     runs-on: ubuntu-latest
@@ -109,7 +113,7 @@ jobs:
             ip addr
             ip route
             brctl show || true
-            sudo iptables-save | grep -v 'TOKEN'
+            sudo nft list ruleset || true
             echo "--- Container status ---"
             sudo ./democtl status unittest || true
             echo "--- Container interface state (host side) ---"

@@ -28,7 +28,7 @@ PACKAGES=(
     e2fsprogs
     dosfstools
     psmisc
-    iptables
+    nftables
     bridge-utils
     expect
     curl
@@ -196,31 +196,23 @@ else
 fi
 
 ###############################################################################
-# 6. Configure iptables for container NAT (idempotent)
+# 6. Configure nftables for container NAT (idempotent)
 ###############################################################################
 echo ""
-echo "=== Configuring iptables for container NAT ==="
+echo "=== Configuring nftables for container NAT ==="
 
 EXT_IF=$(ip route | grep default | awk '{print $5}' | head -n1)
 if [ -z "$EXT_IF" ]; then
-    echo "Warning: Could not detect external interface, skipping iptables" >&2
+    echo "Warning: Could not detect external interface, skipping networking" >&2
 else
-    setup_iptables_nat "$EXT_IF"
-
-    # Add container-to-container isolation (applies to all current and future containers)
-    # Called after NAT rules so ordering is correct in FORWARD chain
+    setup_nftables_nat "$EXT_IF"
     add_container_isolation
 fi
 
-# Make iptables persistent
-if ! command -v iptables-save >/dev/null 2>&1; then
-    echo "Installing iptables-persistent..."
-    apt-get install -y iptables-persistent
-fi
-
-mkdir -p /etc/iptables
-iptables-save > /etc/iptables/rules.v4
-echo "Iptables rules saved to /etc/iptables/rules.v4"
+# Make nftables persistent
+mkdir -p /etc/nftables
+nft list ruleset > /etc/nftables.conf
+echo "nftables rules saved to /etc/nftables.conf"
 
 ###############################################################################
 # 7. Create required directories (idempotent)

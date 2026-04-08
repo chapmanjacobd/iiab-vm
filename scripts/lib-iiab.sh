@@ -68,77 +68,50 @@ sanitize_subdomain() {
     fi
 }
 
-# Setup iptables rules for container NAT (idempotent)
-setup_iptables_nat() {
+# Setup nftables rules for container NAT (idempotent)
+setup_nftables_nat() {
     local ext_if="${1:?Error: external interface required}"
 
-    # Use iptables-save for idempotency since -C doesn't support wildcards like ve-+
-    if ! iptables-save -t nat | grep -q "\-o $ext_if.*MASQUERADE" 2>/dev/null; then
-        echo "Adding NAT masquerade for $ext_if..."
-        iptables -t nat -A POSTROUTING -o "$ext_if" -j MASQUERADE
-    else
-        echo "NAT masquerade already configured"
-    fi
-
-    # Use -I FORWARD 1 to ensure rules are above any Docker/system rules
-    # Match both ve-+ and vb-+ (some systems use vb- for bridged veth)
-    if ! iptables-save | grep -q "vb-+" 2>/dev/null; then
-        echo "Adding container forwarding rules..."
-        # Inbound (Established)
-        iptables -I FORWARD 1 -i "$ext_if" -o vb-+ -m state --state RELATED,ESTABLISHED -j ACCEPT
-        iptables -I FORWARD 1 -i "$ext_if" -o ve-+ -m state --state RELATED,ESTABLISHED -j ACCEPT
-        # Outbound
-        iptables -I FORWARD 1 -i vb-+ -o "$ext_if" -j ACCEPT
-        iptables -I FORWARD 1 -i ve-+ -o "$ext_if" -j ACCEPT
-    else
-        echo "Container forwarding rules already configured"
-    fi
+    # Ensure the table and chains exist
+    nft add table inet iiab 2>/dev/null || true
+    nft add chain inet iiab postrouting '{ type nat hook postrouting priority srcnat; policy accept; }'
+    
+    # Add masquerade rule
+    nft add rule inet iiab postrouting oifname "$ext_if" masquerade
+    echo "Configured nftables NAT masquerade on $ext_if"
 }
 
 # Add per-container network isolation: block container-to-container traffic
 # while allowing access to the host (for nginx reverse proxy) and the internet.
-# This prevents a compromised container from attacking peers on the bridge.
 #
-# FORWARD chain ordering (critical, achieved by reverse-order insertion):
-#   1. ACCEPT: container → host (nginx)
-#   2. ACCEPT: host → container (health checks)
-#   3. DROP:   container → container (isolation)
+# We use a priority of 'filter - 1' to ensure our rules are processed 
+# BEFORE standard iptables/Docker rules in the 'filter' table.
 add_container_isolation() {
     local host_ip="${IIAB_GW}"
-    local bridge="${IIAB_BRIDGE}"
+    local subnet="${IIAB_DEMO_SUBNET}"
 
-    # Use -I FORWARD 1 to ensure rules are above any Docker/system rules.
-    # We insert them in reverse order of desired precedence.
+    # Ensure the table and forward chain exist
+    nft add table inet iiab 2>/dev/null || true
+    # Priority 'filter - 1' is -1 in nftables (standard filter is 0)
+    nft add chain inet iiab forward '{ type filter hook forward priority filter - 1; policy accept; }'
 
-    # 3. Block all container-to-container traffic on the bridge
-    if ! iptables-save | grep -q "\-o vb-+.*DROP" 2>/dev/null; then
-        echo "Adding container-to-container isolation rule..."
-        iptables -I FORWARD 1 -i vb-+ -o vb-+ -j DROP
-        iptables -I FORWARD 1 -i ve-+ -o ve-+ -j DROP
-    fi
+    # 1. Allow container(s) to reach the host (DNS, Nginx proxy)
+    nft add rule inet iiab forward iifname "{ ve-*, vb-* }" ip daddr "$host_ip" accept
 
-    # 2. Allow host to reach container(s) (needed for nginx reverse proxy and health checks)
-    if ! iptables-save | grep -q "\-d $IIAB_DEMO_SUBNET.*ACCEPT" 2>/dev/null; then
-        echo "Adding host-to-container forward rule..."
-        iptables -I FORWARD 1 -d "$IIAB_DEMO_SUBNET" -o vb-+ -j ACCEPT
-        iptables -I FORWARD 1 -d "$IIAB_DEMO_SUBNET" -o ve-+ -j ACCEPT
-    fi
+    # 2. Allow host to reach container(s) (Nginx proxy, health checks)
+    nft add rule inet iiab forward ip daddr "$subnet" oifname "{ ve-*, vb-* }" accept
 
-    # 1. Allow container(s) to reach the host (nginx reverse proxy)
-    if ! iptables-save | grep -q "\-d $host_ip.*ACCEPT" 2>/dev/null; then
-        echo "Adding container-to-host forward rule..."
-        iptables -I FORWARD 1 -i vb-+ -o "$bridge" -d "$host_ip" -j ACCEPT
-        iptables -I FORWARD 1 -i ve-+ -o "$bridge" -d "$host_ip" -j ACCEPT
-    fi
+    # 3. Allow established return traffic from internet
+    nft add rule inet iiab forward ct state established,related accept
+
+    # 4. Block all container-to-container traffic on the bridge
+    nft add rule inet iiab forward iifname "{ ve-*, vb-* }" oifname "{ ve-*, vb-* }" drop
+    
+    echo "Configured nftables container isolation and host-access rules"
 }
 
-# Remove per-container network isolation rules (cleanup -- rarely needed).
-# The isolation rules are global and persistent, so this is only for teardown.
+# Remove all IIAB nftables rules
 remove_container_isolation() {
-    iptables -D FORWARD -i vb-+ -o vb-+ -j DROP 2>/dev/null || true
-    iptables -D FORWARD -i ve-+ -o ve-+ -j DROP 2>/dev/null || true
-    iptables -D FORWARD -d "${IIAB_DEMO_SUBNET}" -o vb-+ -j ACCEPT 2>/dev/null || true
-    iptables -D FORWARD -d "${IIAB_DEMO_SUBNET}" -o ve-+ -j ACCEPT 2>/dev/null || true
-    iptables -D FORWARD -i vb-+ -o "${IIAB_BRIDGE}" -d "${IIAB_GW}" -j ACCEPT 2>/dev/null || true
-    iptables -D FORWARD -i ve-+ -o "${IIAB_BRIDGE}" -d "${IIAB_GW}" -j ACCEPT 2>/dev/null || true
+    nft delete table inet iiab 2>/dev/null || true
+    echo "Removed IIAB nftables configuration"
 }
