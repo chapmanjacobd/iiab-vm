@@ -295,7 +295,9 @@ EOF
 
 # Ensure systemd-networkd is enabled in the rootfs
 ln -sf /usr/lib/systemd/system/systemd-networkd.service "$MOUNT_DIR/etc/systemd/system/multi-user.target.wants/systemd-networkd.service"
-ln -sf /usr/lib/systemd/system/systemd-resolved.service "$MOUNT_DIR/etc/systemd/system/multi-user.target.wants/systemd-resolved.service" 2>/dev/null || true
+# Disable systemd-resolved so it doesn't overwrite resolv.conf
+rm -f "$MOUNT_DIR/etc/systemd/system/sysinit.target.wants/systemd-resolved.service" 2>/dev/null || true
+rm -f "$MOUNT_DIR/etc/systemd/system/multi-user.target.wants/systemd-resolved.service" 2>/dev/null || true
 
 # Container and hardware-specific overrides
 cat >> "$MOUNT_DIR/etc/iiab/local_vars.yml" << 'EOF'
@@ -322,7 +324,7 @@ if $SKIP_INSTALL; then
 
     # Quick boot test to generate SSH keys and lock root
     setup_bridge
-    export MOUNT_DIR IIAB_BRIDGE
+    export MOUNT_DIR IIAB_BRIDGE IIAB_GW IIAB_IP=$IP
     expect << 'EXPECT_EOF'
 set timeout 60
 
@@ -366,14 +368,20 @@ chmod 0755 /usr/sbin/iiab
 EOF_SCRIPT
     chmod +x "$MOUNT_DIR/root/run_build.sh"
 
-    export MOUNT_DIR IIAB_BRIDGE
+    export MOUNT_DIR IIAB_BRIDGE IIAB_GW IIAB_IP=$IP
     expect << 'EXPECT_EOF'
 set timeout 7200
 
-spawn systemd-nspawn -q --network-bridge=$env(IIAB_BRIDGE) --resolv-conf=replace-static -D $env(MOUNT_DIR) -M box --boot
+spawn systemd-nspawn -q --network-bridge=$env(IIAB_BRIDGE) --resolv-conf=off -D $env(MOUNT_DIR) -M box --boot
 
 expect "login: " { send "root\r" }
 expect -re {#\s?$} { send "export PAGER=cat SYSTEMD_PAGER=cat\r" }
+
+# Configure network manually (systemd-networkd may not be running in cloud image)
+expect -re {#\s?$} { send "ip addr add $env(IIAB_IP)/24 dev host0\r" }
+expect -re {#\s?$} { send "ip link set host0 up\r" }
+expect -re {#\s?$} { send "ip route add default via $env(IIAB_GW)\r" }
+expect -re {#\s?$} { send "rm -f /etc/resolv.conf && printf 'nameserver 8.8.8.8\\nnameserver 1.1.1.1\\n' > /etc/resolv.conf\r" }
 
 # Debug: check networking
 expect -re {#\s?$} { send "ip addr\r" }
