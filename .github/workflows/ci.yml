@@ -94,7 +94,10 @@ jobs:
           echo "Waiting for container HTTP service to be ready..."
           READY=false
           for i in $(seq 1 30); do
-            if curl -sS -L --max-time 5 -o /dev/null http://10.0.3.2/ 2>/dev/null; then
+            HTTP_CODE=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 \
+              -H "Host: unittest.iiab.io" http://10.0.3.2/ 2>/dev/null || echo "000")
+            if [ "$HTTP_CODE" != "000" ]; then
+              echo "  Container responding with HTTP $HTTP_CODE (attempt $i)"
               READY=true
               break
             fi
@@ -133,11 +136,14 @@ jobs:
           fi
 
           echo "Container HTTP service is ready, verifying response..."
-          HTTP_CODE=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 http://10.0.3.2/)
+          HTTP_CODE=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 \
+            -H "Host: unittest.iiab.io" http://10.0.3.2/)
           echo "unittest container returned HTTP $HTTP_CODE"
-          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 400 ]; then
+          # Accept 2xx and 3xx — container may redirect to HTTPS or a login page
+          if [ "$HTTP_CODE" -ge 400 ] || [ "$HTTP_CODE" -eq "000" ]; then
             echo "ERROR: Unexpected HTTP status from unittest container" >&2
             exit 1
           fi
-          # Verify the response contains expected content (IIAB landing page or similar)
-          curl -sS --max-time 15 -D- http://10.0.3.2/ | head -30
+          # Show the response headers
+          curl -sS --max-time 15 -D- -o /dev/null \
+            -H "Host: unittest.iiab.io" http://10.0.3.2/
