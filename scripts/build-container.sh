@@ -383,6 +383,9 @@ expect -re {#\s?$} { send "ip route\r" }
 expect -re {#\s?$} { send "cat /etc/resolv.conf\r" }
 expect -re {#\s?$} { send "ping -c1 -W2 8.8.8.8\r" }
 
+# Debug on host side: check FORWARD policy and NAT
+system "echo '=== iptables backend ==='; update-alternatives --display iptables 2>/dev/null | grep best || iptables --version; echo '=== FORWARD policy ==='; sudo iptables -L FORWARD -n -v 2>/dev/null | head -30; echo '=== NAT rules ==='; sudo iptables -t nat -L POSTROUTING -n -v 2>/dev/null | head -20; echo '=== nftables ==='; sudo nft list ruleset 2>/dev/null | head -60; echo '=== veth interfaces ==='; ip addr | grep -E 'iiab|veth|vz|ve-|vb-' || true; echo '=== Bridge ==='; bridge link show 2>/dev/null || brctl show 2>/dev/null || true"
+
 # Debian cloud image prep: generate SSH host keys (Ansible starts SSH later; needed on Debian)
 expect -re {#\s?$} { send "ssh-keygen -A\r" }
 

@@ -71,11 +71,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: System prep
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y systemd-container debootstrap parted jq e2fsprogs dosfstools psmisc nftables bridge-utils expect curl git
-
       - name: Initialize host
         run: sudo ./democtl init
 
