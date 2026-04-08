@@ -470,8 +470,13 @@ echo "Sector size: $SECTOR_SIZE"
 
 echo "Filesystem: $(( ROOTFS_PARTSIZE / 1024 / 1024 ))MB, target partition: $(( TARGET_PARTITION_SIZE / 1024 / 1024 ))MB"
 
-# Recreate partition 1 at exact target size using sgdisk (avoids parted's interactive GPT prompt)
-SGDISK_INFO=$(sgdisk -i 1 "$LOOPDEV" 2>/dev/null || true)
+# Detach loop device -- we'll work on the image file directly from here
+losetup --detach "$LOOPDEV"
+LOOPDEV=""
+
+# Recreate partition 1 at exact target size using sgdisk on the image file
+# (avoids kernel loop-device caching and GPT size-mismatch issues)
+SGDISK_INFO=$(sgdisk -i 1 "$WORK_IMG" 2>/dev/null || true)
 PART_START_SECTOR=$(echo "$SGDISK_INFO" | awk '/^First sector:/ {print $3}')
 # GUID is field 4: "Partition GUID code: UUID (description)"
 PART_TYPE_CODE=$(echo "$SGDISK_INFO" | awk '/^Partition GUID code:/ {print $4}')
@@ -479,20 +484,38 @@ PART_TYPE_CODE=$(echo "$SGDISK_INFO" | awk '/^Partition GUID code:/ {print $4}')
 TARGET_SECTORS=$((TARGET_PARTITION_SIZE / SECTOR_SIZE))
 PART_END_SECTOR=$((PART_START_SECTOR + TARGET_SECTORS - 1))
 
-echo "Recreating partition 1: sector ${PART_START_SECTOR} to ${PART_END_SECTOR} (type: ${PART_TYPE_CODE:-0FC63DAF-8483-4772-8E79-3D69D8477DE4})"
+echo "Recreating partition 1 on image: sector ${PART_START_SECTOR} to ${PART_END_SECTOR}"
 
-# Move GPT backup to current end of disk
-sgdisk -e "$LOOPDEV" >/dev/null 2>&1
-# Delete and recreate with exact bounds
-sgdisk -d 1 "$LOOPDEV" >/dev/null 2>&1
+# Delete and recreate with exact bounds directly on the image file
+sgdisk -d 1 "$WORK_IMG" >/dev/null 2>&1
 sgdisk -n "1:${PART_START_SECTOR}:${PART_END_SECTOR}" \
     -t "1:${PART_TYPE_CODE:-1}" \
-    "$LOOPDEV" >/dev/null 2>&1
+    "$WORK_IMG" >/dev/null 2>&1
 
-# Re-read partition table
-sync
-partx -u "$LOOPDEV" 2>/dev/null || partprobe "$LOOPDEV" 2>/dev/null || true
-udevadm settle 2>/dev/null || sleep 2
+# Truncate image: partition end + 1 sector + GPT backup (~34 sectors), aligned
+GPT_BACKUP_SECTORS=34
+TRUNCATE_SECTORS=$((PART_END_SECTOR + 1 + GPT_BACKUP_SECTORS))
+NEW_SIZE=$((TRUNCATE_SECTORS * SECTOR_SIZE))
+# Align to 1 MiB boundary
+NEW_SIZE=$(( ((NEW_SIZE + ALIGN - 1) / ALIGN) * ALIGN ))
+
+echo "Truncating image to $(( NEW_SIZE / 1024 / 1024 ))MB..."
+truncate -s "$NEW_SIZE" "$WORK_IMG"
+
+# Fix GPT backup header for the new (smaller) disk size
+sgdisk -e "$WORK_IMG" >/dev/null 2>&1
+
+# Reattach loop device with partition scanning so we can expand the filesystem
+LOOPDEV=$(losetup --find "$WORK_IMG" --nooverlap --show --partscan)
+PARTDEV="${LOOPDEV}p1"
+for _ in $(seq 1 30); do
+    [ -b "${LOOPDEV}p1" ] && break
+    sleep 1
+done
+if [ ! -b "${LOOPDEV}p1" ]; then
+    echo "Error: Partition ${LOOPDEV}p1 not found after reattach" >&2
+    exit 1
+fi
 
 # Expand filesystem to fill the (now smaller) partition
 echo "Expanding filesystem to fill resized partition..."
@@ -503,35 +526,9 @@ if ! resize2fs "$PARTDEV" 2>&1; then
 fi
 tune2fs -m 1 "$PARTDEV" >/dev/null 2>&1
 
-# Detach loop device before truncation
+# Final detach
 losetup --detach "$LOOPDEV"
 LOOPDEV=""
-
-# Compute truncation size: partition end + alignment + GPT backup
-PART_TYPE=$(blkid -o value -s PTTYPE "$WORK_IMG")
-NEW_SIZE=$(( (PART_END_SECTOR + 1) * SECTOR_SIZE ))
-# Align to 1 MiB boundary
-NEW_SIZE=$(( ((NEW_SIZE + ALIGN - 1) / ALIGN) * ALIGN ))
-if [[ "$PART_TYPE" == "gpt" ]]; then
-    NEW_SIZE=$((NEW_SIZE + 1048576))  # GPT backup header (~1MB at end)
-fi
-
-echo "Truncating image to $(( NEW_SIZE / 1024 / 1024 ))MB..."
-truncate -s "$NEW_SIZE" "$WORK_IMG"
-
-if [[ "$PART_TYPE" == "gpt" ]]; then
-    echo "Fixing GPT backup header..."
-    if ! sgdisk -e "$WORK_IMG" 2>&1; then
-        echo "Warning: sgdisk -e failed, trying with --move-second-header"
-        sgdisk --move-second-header "$WORK_IMG" 2>&1 || echo "Warning: GPT header fix failed, image may not be bootable"
-    fi
-    # Verify the partition table is valid
-    if ! sgdisk -v "$WORK_IMG" >/dev/null 2>&1; then
-        echo "Error: Partition table validation failed after shrink"
-        sgdisk -v "$WORK_IMG" 2>&1 || true
-        exit 1
-    fi
-fi
 
 echo "Image shrunk successfully ($(du -sm "$WORK_IMG" | cut -f1)MB)"
 
