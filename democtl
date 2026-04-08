@@ -30,77 +30,60 @@ DISK_BASE=0       # No extra disk headroom; use requested size exactly
 LOCK_FILE="$STATE_DIR/.democtl.lock"
 LOCK_FD=200
 
-# Stale lock detection -- verify the lock-holding process is actually a democtl
-_try_clean_stale_lock() {
-    if [ -f "$LOCK_FILE" ]; then
+# Stale PID detection -- verify the PID in the lock file is actually a democtl process
+_try_clean_stale_pid() {
+    if [ -f "$LOCK_FILE.pid" ]; then
         local stale_pid=""
         stale_pid=$(cat "$LOCK_FILE.pid" 2>/dev/null || echo "")
         if [ -n "$stale_pid" ] && [ "$stale_pid" -gt 1 ] 2>/dev/null; then
             # Check if process exists
             if ! kill -0 "$stale_pid" 2>/dev/null; then
-                echo "Warning: Lock held by dead PID $stale_pid, removing stale lock" >&2
-                rm -f "$LOCK_FILE" "$LOCK_FILE.pid"
-                return 0  # Caller should retry
+                # PID is dead, so the .pid file is stale.
+                # We don't remove the LOCK_FILE itself because flock works on the file,
+                # and deleting it while someone else might actually hold it (if PID was wrong)
+                # would break the lock. We just remove the stale .pid file.
+                rm -f "$LOCK_FILE.pid"
+                return 0
             fi
-            # Process exists -- verify it's actually a democtl process (avoid PID reuse false positives)
+            # Process exists -- verify it's actually a democtl process
             local cmdline=""
             cmdline=$(tr '\0' ' ' < "/proc/$stale_pid/cmdline" 2>/dev/null || echo "")
             if [ -n "$cmdline" ] && ! echo "$cmdline" | grep -q 'democtl'; then
-                # Process exists but is NOT democtl -- likely PID reuse, treat as stale
+                # Process exists but is NOT democtl -- likely PID reuse
                 local lock_age
                 lock_age=$(( $(date +%s) - $(stat -c%Y "$LOCK_FILE" 2>/dev/null || date +%s) ))
-                if [ "$lock_age" -gt 300 ]; then  # Only override if lock is > 5 min old
-                    # Random sleep to avoid race conditions when multiple processes try to clean the same lock
-                    sleep 0.$(( RANDOM % 10 ))
-                    [ -f "$LOCK_FILE" ] || return 0
-                    echo "Warning: Lock held by non-democtl PID $stale_pid (age: ${lock_age}s), removing stale lock" >&2
-                    rm -f "$LOCK_FILE" "$LOCK_FILE.pid"
+                if [ "$lock_age" -gt 300 ]; then
+                    rm -f "$LOCK_FILE.pid"
                     return 0
                 fi
             fi
         fi
     fi
-    return 1  # No stale lock or process still alive (and is democtl)
+    return 1
 }
 
-# Acquire an exclusive lock. Non-blocking by default -- errors out immediately
-# if the lock is held, so concurrent adds fail cleanly instead of racing.
+# Acquire an exclusive lock.
 acquire_lock() {
     local timeout="${1:--1}"  # -1 = wait forever, 0 = non-blocking
-    eval "exec $LOCK_FD>$LOCK_FILE"
-
-    # Write PID before flock so stale-lock detection always sees a valid PID.
-    # This avoids a race where another caller reads a stale PID between flock
-    # success and the PID write.
-    echo $$ > "$LOCK_FILE.pid"
+    eval "exec $LOCK_FD>>$LOCK_FILE"
 
     if [ "$timeout" = "0" ]; then
         if ! flock -n "$LOCK_FD"; then
-            # Attempt stale lock cleanup
-            if _try_clean_stale_lock; then
-                eval "exec $LOCK_FD>$LOCK_FILE"
-                echo $$ > "$LOCK_FILE.pid"
-                if ! flock -n "$LOCK_FD"; then
-                    echo "Error: another democtl operation is in progress (lock held)." >&2
-                    echo "  If no other democtl is running, remove stale lock:" >&2
-                    echo "    rm -f $LOCK_FILE" >&2
-                    return 1
+            # Attempt stale PID cleanup
+            if _try_clean_stale_pid; then
+                if flock -n "$LOCK_FD"; then
+                    break  # Lock acquired after cleanup
                 fi
-            else
-                echo "Error: another democtl operation is in progress (lock held)." >&2
-                echo "  If no other democtl is running, remove stale lock:" >&2
-                echo "    rm -f $LOCK_FILE $LOCK_FILE.pid" >&2
-                return 1
             fi
+            echo "Error: another democtl operation is in progress (lock held)." >&2
+            return 1
         fi
     else
-        # For blocking mode, periodically check for stale locks
+        # For blocking mode, periodically check for stale PIDs
         if [ "$timeout" = "-1" ]; then
             local retries=0
             while ! flock -n "$LOCK_FD" 2>/dev/null; do
-                if _try_clean_stale_lock; then
-                    eval "exec $LOCK_FD>$LOCK_FILE"
-                    echo $$ > "$LOCK_FILE.pid"
+                if _try_clean_stale_pid; then
                     if flock -n "$LOCK_FD"; then
                         break
                     fi
@@ -108,16 +91,20 @@ acquire_lock() {
                 retries=$((retries + 1))
                 if [ "$retries" -ge 60 ]; then
                     echo "Error: Could not acquire lock after 5 minutes" >&2
-                    echo "  If no other democtl is running, remove stale lock:" >&2
-                    echo "    rm -f $LOCK_FILE $LOCK_FILE.pid" >&2
                     return 1
                 fi
                 sleep 5
             done
         else
-            flock -w "$timeout" "$LOCK_FD"
+            if ! flock -w "$timeout" "$LOCK_FD"; then
+                echo "Error: Could not acquire lock after ${timeout}s" >&2
+                return 1
+            fi
         fi
     fi
+
+    # SUCCESS: We hold the lock. Now write our PID.
+    echo $$ > "$LOCK_FILE.pid"
 }
 
 release_lock() {
@@ -551,8 +538,8 @@ build_demo() {
     fi
 
     # Resource pre-flight (re-check under lock -- resources may have changed since build)
-    if ! acquire_lock 0; then
-        log_demo "$name" "Error: Could not acquire lock for resource re-check -- another operation may be in progress"
+    if ! acquire_lock 10; then
+        log_demo "$name" "Error: Could not acquire lock for resource re-check within 10s -- another operation may be in progress"
         echo "failed" > "$demo_dir/status"
         return 1
     fi
@@ -729,43 +716,31 @@ cmd_rebuild() {
             continue
         fi
 
-        # Save config before removing
-        local saved_config
-        saved_config=$(cat "$demo_dir/config")
+        # Extract values before removal.
+        # Use printf %q to safely escape values (avoids eval injection from declare -p).
+        local IIAB_BRANCH IIAB_REPO IMAGE_SIZE_MB VOLATILE RAM_IMAGE BUILD_ON_DISK SKIP_INSTALL LOCAL_VARS WILDCARD DESCRIPTION
+        eval "$( (
+            # shellcheck source=/dev/null
+            source "$demo_dir/config"
+            for _rebuild_var in IIAB_BRANCH IIAB_REPO IMAGE_SIZE_MB VOLATILE RAM_IMAGE BUILD_ON_DISK SKIP_INSTALL LOCAL_VARS WILDCARD DESCRIPTION; do
+                printf '%s=%q\n' "$_rebuild_var" "${!_rebuild_var:-}"
+            done
+        ) )"
 
         cmd_remove "$name" || { exit_code=1; continue; }
 
         # Re-add with saved config
-        local branch="" repo="" size_mb="" volatile="" ram_image=true
-        local local_vars="" wildcard=false description=""
-        local build_on_disk=false skip_install=false
-
-        while IFS='=' read -r key value; do
-            case "$key" in
-                IIAB_BRANCH)   branch="$value" ;;
-                IIAB_REPO)     repo="$value" ;;
-                IMAGE_SIZE_MB) size_mb="$value" ;;
-                VOLATILE)      volatile="$value" ;;
-                RAM_IMAGE)     ram_image=$value ;;
-                BUILD_ON_DISK) build_on_disk=$value ;;
-                SKIP_INSTALL)  skip_install=$value ;;
-                LOCAL_VARS)    local_vars="$value" ;;
-                WILDCARD)      wildcard=$value ;;
-                DESCRIPTION)   description="$value" ;;
-            esac
-        done <<< "$saved_config"
-
         local add_args=("$name")
-        [ -n "${branch:-}" ] && add_args+=("--branch" "$branch")
-        [ -n "${repo:-}" ] && add_args+=("--repo" "$repo")
-        [ -n "${size_mb:-}" ] && add_args+=("--size" "${size_mb:-15000}")
-        [ -n "${volatile:-}" ] && add_args+=("--volatile" "${volatile:-state}")
-        [ "${ram_image:-true}" = "false" ] && add_args+=("--disk-backed")
-        [ "${build_on_disk:-false}" = "true" ] && add_args+=("--build-on-disk")
-        [ "${skip_install:-false}" = "true" ] && add_args+=("--skip-install")
-        [ -n "${local_vars:-}" ] && add_args+=("--local-vars" "$local_vars")
-        [ "${wildcard:-false}" = "true" ] && add_args+=("--wildcard")
-        [ -n "${description:-}" ] && add_args+=("--description" "$description")
+        [ -n "${IIAB_BRANCH:-}" ] && add_args+=("--branch" "$IIAB_BRANCH")
+        [ -n "${IIAB_REPO:-}" ] && add_args+=("--repo" "$IIAB_REPO")
+        [ -n "${IMAGE_SIZE_MB:-}" ] && add_args+=("--size" "$IMAGE_SIZE_MB")
+        [ -n "${VOLATILE:-}" ] && add_args+=("--volatile" "$VOLATILE")
+        [ "${RAM_IMAGE:-true}" = "false" ] && add_args+=("--disk-backed")
+        [ "${BUILD_ON_DISK:-false}" = "true" ] && add_args+=("--build-on-disk")
+        [ "${SKIP_INSTALL:-false}" = "true" ] && add_args+=("--skip-install")
+        [ -n "${LOCAL_VARS:-}" ] && add_args+=("--local-vars" "$LOCAL_VARS")
+        [ "${WILDCARD:-false}" = "true" ] && add_args+=("--wildcard")
+        [ -n "${DESCRIPTION:-}" ] && add_args+=("--description" "$DESCRIPTION")
 
         cmd_build "${add_args[@]}" || exit_code=1
     done
@@ -1252,19 +1227,23 @@ cmd_start() {
             echo "Warning: systemctl enable --now returned non-zero (container may still start, polling for status...)"
         fi
 
-        # Poll for actual container startup
+        # Poll for actual container startup (nspawn can fail asynchronously)
         sleep 3
         local poll_count=0
-        local poll_max=20
+        local poll_max=60
         local container_active=false
+        local non_running_count=0
         while [ $poll_count -lt $poll_max ]; do
             local substate=""
             substate=$(systemctl show "systemd-nspawn@${name}.service" --property=SubState --value 2>/dev/null || echo "")
-            if [ "$substate" = "running" ] || [[ "$substate" == *"=running" ]]; then
+            if [ "$substate" = "running" ]; then
                 container_active=true
                 break
             fi
-            if [ "$substate" = "auto-restart" ] || [[ "$substate" == *"=auto-restart" ]]; then
+            # Track consecutive non-running states to distinguish crash-looping
+            # from transient failures (e.g., brief failed state before restart)
+            non_running_count=$((non_running_count + 1))
+            if [ "$non_running_count" -ge 3 ] && { [ "$substate" = "auto-restart" ] || [ "$substate" = "failed" ]; }; then
                 break
             fi
             poll_count=$((poll_count + 1))
@@ -1273,6 +1252,10 @@ cmd_start() {
 
         if ! $container_active; then
             echo "Error: Container did not become active within ${poll_max}s" >&2
+            log_demo "$name" "--- systemd-nspawn@${name}.service state ---"
+            systemctl show "systemd-nspawn@${name}.service" --property=ActiveState,SubState,ExecMainStatus 2>&1 || true
+            log_demo "$name" "--- journal (last 30 lines) ---"
+            journalctl -u "systemd-nspawn@${name}.service" --no-pager -n 30 2>&1 || true
             echo "failed" > "$demo_dir/status"
             exit_code=1
             continue
@@ -1326,19 +1309,23 @@ cmd_restart() {
         echo "stopping" > "$demo_dir/status"
         systemctl restart "systemd-nspawn@${name}.service"
 
-        # Poll for actual container startup
+        # Poll for actual container startup (nspawn can fail asynchronously)
         sleep 3
         local poll_count=0
-        local poll_max=20
+        local poll_max=60
         local container_active=false
+        local non_running_count=0
         while [ $poll_count -lt $poll_max ]; do
             local substate=""
             substate=$(systemctl show "systemd-nspawn@${name}.service" --property=SubState --value 2>/dev/null || echo "")
-            if [ "$substate" = "running" ] || [[ "$substate" == *"=running" ]]; then
+            if [ "$substate" = "running" ]; then
                 container_active=true
                 break
             fi
-            if [ "$substate" = "auto-restart" ] || [[ "$substate" == *"=auto-restart" ]]; then
+            # Track consecutive non-running states to distinguish crash-looping
+            # from transient failures (e.g., brief failed state before restart)
+            non_running_count=$((non_running_count + 1))
+            if [ "$non_running_count" -ge 3 ] && { [ "$substate" = "auto-restart" ] || [ "$substate" = "failed" ]; }; then
                 break
             fi
             poll_count=$((poll_count + 1))
@@ -1347,6 +1334,8 @@ cmd_restart() {
 
         if ! $container_active; then
             echo "Error: Container did not become active within ${poll_max}s after restart" >&2
+            log_demo "$name" "--- journal (last 30 lines) ---"
+            journalctl -u "systemd-nspawn@${name}.service" --no-pager -n 30 2>&1 || true
             echo "failed" > "$demo_dir/status"
             exit_code=1
             continue

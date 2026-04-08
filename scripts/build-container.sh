@@ -450,21 +450,33 @@ echo "Shrinking filesystem to minimal size..."
 e2fsck -p -f "$PARTDEV"
 resize2fs -M "$PARTDEV"
 
-# Calculate partition size with buffer
+# Calculate minimal partition size from filesystem metadata
 ROOTFS_BLOCKSIZE=$(tune2fs -l "$PARTDEV" | grep "^Block size" | awk '{print $NF}')
 ROOTFS_BLOCKCOUNT=$(tune2fs -l "$PARTDEV" | grep "^Block count" | awk '{print $NF}')
 ROOTFS_PARTSIZE=$((ROOTFS_BLOCKCOUNT * ROOTFS_BLOCKSIZE))
-BUFFER_SIZE_MB=200
+# 50MB buffer covers ext4 journal (~128MB reserved, typically <32MB active) + alignment slack.
+# resize2fs -M already produces the exact minimum, so this is pure safety margin.
+BUFFER_SIZE_MB=50
 BUFFER_SIZE=$((BUFFER_SIZE_MB * 1024 * 1024))
-TARGET_USER_SPACE=$((ROOTFS_PARTSIZE + BUFFER_SIZE))
-TOTAL_REQUIRED_SIZE=$(( (TARGET_USER_SPACE * 1011) / 1000 ))  # /0.99 ≈ *1.011
+TARGET_PARTITION_SIZE=$((ROOTFS_PARTSIZE + BUFFER_SIZE))
 
+# Align to 1 MiB boundary for safety
+ALIGN=$((1024 * 1024))
+TARGET_PARTITION_SIZE=$(( ((TARGET_PARTITION_SIZE + ALIGN - 1) / ALIGN) * ALIGN ))
+
+# Get device sector size for alignment verification
+SECTOR_SIZE=$(blockdev --getss "$LOOPDEV" 2>/dev/null || echo 512)
+echo "Sector size: $SECTOR_SIZE"
+
+echo "Filesystem: $(( ROOTFS_PARTSIZE / 1024 / 1024 ))MB, target partition: $(( TARGET_PARTITION_SIZE / 1024 / 1024 ))MB"
+
+# Get partition start offset
 PART_INFO=$(parted -m --script "$LOOPDEV" unit B print | grep "^1:")
 ROOTFS_PARTSTART=$(echo "$PART_INFO" | awk -F ":" '{print $2}' | tr -d 'B')
-ROOTFS_PARTNEWEND=$((ROOTFS_PARTSTART + TOTAL_REQUIRED_SIZE - 1))
+ROOTFS_PARTNEWEND=$((ROOTFS_PARTSTART + TARGET_PARTITION_SIZE - 1))
 
-echo "Resizing partition to ${ROOTFS_PARTNEWEND}..."
-# Use expect to reliably answer the GPT prompt (Fix then Yes)
+echo "Resizing partition 1 to end at byte ${ROOTFS_PARTNEWEND}..."
+PART_TYPE=$(blkid -o value -s PTTYPE "$WORK_IMG")
 export PARTED_DEVICE="$LOOPDEV"
 export PARTED_NEW_END="$ROOTFS_PARTNEWEND"
 expect <<'EXPECT_EOF' >/dev/null 2>&1 || true
@@ -476,35 +488,55 @@ expect {
     eof
 }
 EXPECT_EOF
+
 sync
 partprobe "$LOOPDEV" 2>/dev/null || true
 udevadm settle 2>/dev/null || sleep 2
 
-# Expand filesystem to fill new partition
-echo "Expanding filesystem to fill partition..."
+# Re-read the actual partition end after parted may have adjusted it
+PART_INFO_AFTER=$(parted -m --script "$LOOPDEV" unit B print | grep "^1:")
+ROOTFS_PARTNEWEND=$(echo "$PART_INFO_AFTER" | awk -F ":" '{print $3}' | tr -d 'B')
+echo "Actual partition end: $ROOTFS_PARTNEWEND"
+
+# Expand filesystem to fill the (now smaller) partition
+echo "Expanding filesystem to fill resized partition..."
 e2fsck -p -f "$PARTDEV" || true
-resize2fs "$PARTDEV" >/dev/null 2>&1
+if ! resize2fs "$PARTDEV" 2>&1; then
+    echo "Error: resize2fs failed, filesystem does not match partition size" >&2
+    exit 1
+fi
 tune2fs -m 1 "$PARTDEV" >/dev/null 2>&1
 
 # Detach loop device before truncation
 losetup --detach "$LOOPDEV"
 LOOPDEV=""
 
-# Get free space after partition and truncate
+# Get partition type and compute truncation size using sector-aligned actual partition end
 PART_TYPE=$(blkid -o value -s PTTYPE "$WORK_IMG")
-FREE_SPACE=$(parted -m --script "$WORK_IMG" unit B print free | tail -1)
+NEW_SIZE=$((ROOTFS_PARTNEWEND + ALIGN))
+# Align NEW_SIZE to sector boundary
+SECTOR_SIZE=$((SECTOR_SIZE + 0))  # Ensure numeric
+if [ "$SECTOR_SIZE" -gt 0 ] 2>/dev/null; then
+    NEW_SIZE=$(( ((NEW_SIZE + SECTOR_SIZE - 1) / SECTOR_SIZE) * SECTOR_SIZE ))
+fi
+if [[ "$PART_TYPE" == "gpt" ]]; then
+    NEW_SIZE=$((NEW_SIZE + 1048576))  # GPT backup header (~1MB at end)
+fi
 
-if [[ "$FREE_SPACE" =~ "free" ]]; then
-    NEW_SIZE=$(echo "$FREE_SPACE" | awk -F ":" '{print $2}' | tr -d 'B')
-    if [[ "$PART_TYPE" == "gpt" ]]; then
-        NEW_SIZE=$((NEW_SIZE + 1048576))  # GPT backup header
+echo "Truncating image to $(( NEW_SIZE / 1024 / 1024 ))MB..."
+truncate -s "$NEW_SIZE" "$WORK_IMG"
+
+if [[ "$PART_TYPE" == "gpt" ]]; then
+    echo "Fixing GPT backup header..."
+    if ! sgdisk -e "$WORK_IMG" 2>&1; then
+        echo "Warning: sgdisk -e failed, trying with --move-second-header"
+        sgdisk --move-second-header "$WORK_IMG" 2>&1 || echo "Warning: GPT header fix failed, image may not be bootable"
     fi
-
-    echo "Truncating image to $(( NEW_SIZE / 1024 / 1024 ))MB..."
-    truncate -s "$NEW_SIZE" "$WORK_IMG"
-
-    if [[ "$PART_TYPE" == "gpt" ]]; then
-        sgdisk -e "$WORK_IMG" >/dev/null 2>&1
+    # Verify the partition table is valid
+    if ! sgdisk -v "$WORK_IMG" >/dev/null 2>&1; then
+        echo "Error: Partition table validation failed after shrink"
+        sgdisk -v "$WORK_IMG" 2>&1 || true
+        exit 1
     fi
 fi
 

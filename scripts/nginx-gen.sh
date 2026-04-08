@@ -31,6 +31,17 @@ release_nginx_lock() {
 
 trap release_nginx_lock EXIT
 
+# Extract a single config value from a demo's config file via subshell
+# to avoid variable leakage between demos.
+_demo_config_value() {
+    local key="$1" config_file="$2"
+    (
+        # shellcheck source=/dev/null
+        source "$config_file"
+        eval "printf '%s' \"\${$key:-}\""
+    )
+}
+
 # Acquire lock before generating config
 acquire_nginx_lock
 
@@ -54,10 +65,8 @@ fi
 # Find wildcard domain first
 fallback_domain="large.iiab.io"
 for name in "${demo_names[@]}"; do
-    # shellcheck source=/dev/null
-    source "$ACTIVE_DIR/$name/config"
-    if [ "${WILDCARD:-false}" = "true" ]; then
-        fallback_domain="$(sanitize_subdomain "${SUBDOMAIN:-$name}").iiab.io"
+    if [ "$(_demo_config_value WILDCARD "$ACTIVE_DIR/$name/config")" = "true" ]; then
+        fallback_domain="$(sanitize_subdomain "$(_demo_config_value SUBDOMAIN "$ACTIVE_DIR/$name/config" || echo "$name")").iiab.io"
         break
     fi
 done
@@ -72,10 +81,9 @@ HEADER
 
     # Upstream blocks
     for name in "${demo_names[@]}"; do
-        # shellcheck source=/dev/null
-        source "$ACTIVE_DIR/$name/config"
+        subdomain=$(_demo_config_value SUBDOMAIN "$ACTIVE_DIR/$name/config")
         ip=$(cat "$ACTIVE_DIR/$name/ip")
-        subdomain=$(sanitize_subdomain "${SUBDOMAIN:-$name}")
+        subdomain=$(sanitize_subdomain "${subdomain:-$name}")
         upstream_name=$(echo "$name" | tr '-' '_')
 
         printf "upstream %s {\n    server %s:80;\n    keepalive 32;\n}\n\n" \
@@ -98,9 +106,8 @@ HEADER
 
     # HTTP server blocks -- one per demo (avoids if-in-location issues)
     for name in "${demo_names[@]}"; do
-        # shellcheck source=/dev/null
-        source "$ACTIVE_DIR/$name/config"
-        subdomain=$(sanitize_subdomain "${SUBDOMAIN:-$name}")
+        subdomain=$(_demo_config_value SUBDOMAIN "$ACTIVE_DIR/$name/config")
+        subdomain=$(sanitize_subdomain "${subdomain:-$name}")
         cert_path="/etc/letsencrypt/live/${subdomain}.iiab.io/fullchain.pem"
         upstream_name=$(echo "$name" | tr '-' '_')
 
@@ -144,9 +151,8 @@ HEADER
 
     # HTTPS server blocks for each demo
     for name in "${demo_names[@]}"; do
-        # shellcheck source=/dev/null
-        source "$ACTIVE_DIR/$name/config"
-        subdomain=$(sanitize_subdomain "${SUBDOMAIN:-$name}")
+        subdomain=$(_demo_config_value SUBDOMAIN "$ACTIVE_DIR/$name/config")
+        subdomain=$(sanitize_subdomain "${subdomain:-$name}")
         upstream_name=$(echo "$name" | tr '-' '_')
         cert_path="/etc/letsencrypt/live/${subdomain}.iiab.io/fullchain.pem"
 
