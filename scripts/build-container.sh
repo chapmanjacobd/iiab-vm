@@ -313,8 +313,6 @@ if $SKIP_INSTALL; then
     echo "=== Step 3: SKIPPED (--skip-install) ==="
     # Still need basic container setup that the install step would have done
     systemd-firstboot --root="$MOUNT_DIR" --delete-root-password --force
-    rm -f "$MOUNT_DIR/etc/resolv.conf"
-    echo "nameserver 8.8.8.8" > "$MOUNT_DIR/etc/resolv.conf"
 
     # Quick boot test to generate SSH keys and lock root
     setup_bridge
@@ -322,7 +320,7 @@ if $SKIP_INSTALL; then
     expect << 'EXPECT_EOF'
 set timeout 60
 
-spawn systemd-nspawn -q --network-bridge=$env(IIAB_BRIDGE) --resolv-conf=off -D $env(MOUNT_DIR) -M box --boot
+spawn systemd-nspawn -q --network-bridge=$env(IIAB_BRIDGE) -D $env(MOUNT_DIR) -M box --boot
 
 expect "login: " { send "root\r" }
 expect -re {#\s?$} { send "ssh-keygen -A\r" }
@@ -346,8 +344,6 @@ else
     fi
 
     systemd-firstboot --root="$MOUNT_DIR" --delete-root-password --force
-    rm -f "$MOUNT_DIR/etc/resolv.conf"
-    echo "nameserver 8.8.8.8" > "$MOUNT_DIR/etc/resolv.conf"
 
     cat > "$MOUNT_DIR/root/run_build.sh" << 'EOF_SCRIPT'
 #!/bin/bash
@@ -364,7 +360,7 @@ EOF_SCRIPT
     expect << 'EXPECT_EOF'
 set timeout 7200
 
-spawn systemd-nspawn -q --network-bridge=$env(IIAB_BRIDGE) --resolv-conf=off -D $env(MOUNT_DIR) -M box --boot
+spawn systemd-nspawn -q --network-bridge=$env(IIAB_BRIDGE) -D $env(MOUNT_DIR) -M box --boot
 
 expect "login: " { send "root\r" }
 expect -re {#\s?$} { send "export PAGER=cat SYSTEMD_PAGER=cat\r" }
