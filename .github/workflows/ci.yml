@@ -18,10 +18,12 @@ jobs:
           shellcheck democtl
           shellcheck scripts/*.sh
 
-  unit-tests:
+  tests:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y nftables
       - name: Validate scripts syntax
         run: |
           bash -n democtl
@@ -31,34 +33,12 @@ jobs:
         run: ./democtl help
       - name: Test democtl list (empty)
         run: sudo ./democtl list
-
-  concurrency-tests:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
       - name: Run concurrency tests
         run: sudo bash tests/test-concurrency.sh
-
-  e2e-tests:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
       - name: Run e2e tests
         run: sudo bash tests/test-e2e.sh
-
-  nginx-gen-tests:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
       - name: Run nginx generation tests
         run: sudo bash tests/test-nginx-gen.sh
-
-  nftables-tests:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - name: Install nftables
-        run: sudo apt-get update && sudo apt-get install -y nftables
       - name: Run nftables isolation tests
         run: sudo bash tests/test-nftables.sh
       - name: Run empirical isolation tests

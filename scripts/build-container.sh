@@ -295,7 +295,8 @@ EOF
 # Ensure systemd-networkd is enabled in the rootfs
 ln -sf /usr/lib/systemd/system/systemd-networkd.service "$MOUNT_DIR/etc/systemd/system/multi-user.target.wants/systemd-networkd.service"
 
-# Write resolv.conf directly since we don't run systemd-resolved
+# Remove symlink if present (Debian often symlinks to /run/systemd/resolve/stub-resolv.conf)
+rm -f "$MOUNT_DIR/etc/resolv.conf"
 cat > "$MOUNT_DIR/etc/resolv.conf" << EOF
 nameserver 8.8.8.8
 nameserver 1.1.1.1
