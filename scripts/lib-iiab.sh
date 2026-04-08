@@ -161,16 +161,16 @@ add_container_isolation() {
     local bridge="${IIAB_BRIDGE}"
 
     # Docker sets FORWARD policy DROP; allow IIAB bridge traffic.
-    # Insert iptables rules at the very top (before Docker's jump rules).
+    # Use nft directly to avoid iptables-nft adding ct state filtering.
     # Clean stale rules first (idempotent).
-    while iptables -C FORWARD -i "$bridge" -j ACCEPT 2>/dev/null; do
-        iptables -D FORWARD -i "$bridge" -j ACCEPT 2>/dev/null || break
+    local handles
+    handles=$(nft --handle list chain ip filter FORWARD 2>/dev/null | grep "$bridge" | grep -oP 'handle \K[0-9]+' || true)
+    for h in $handles; do
+        nft delete rule ip filter FORWARD "$h" 2>/dev/null || true
     done
-    while iptables -C FORWARD -o "$bridge" -j ACCEPT 2>/dev/null; do
-        iptables -D FORWARD -o "$bridge" -j ACCEPT 2>/dev/null || break
-    done
-    iptables -I FORWARD 1 -i "$bridge" -j ACCEPT 2>/dev/null || true
-    iptables -I FORWARD 2 -o "$bridge" -j ACCEPT 2>/dev/null || true
+    # Insert ACCEPT rules at top of FORWARD chain — no ct state filter
+    nft insert rule ip filter FORWARD iifname "$bridge" accept 2>/dev/null || true
+    nft insert rule ip filter FORWARD oifname "$bridge" accept 2>/dev/null || true
 
     # 1. L3 (inet) rules for Host/Internet access
     nft add table inet iiab 2>/dev/null || true
