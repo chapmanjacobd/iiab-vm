@@ -328,7 +328,7 @@ if $SKIP_INSTALL; then
     expect << 'EXPECT_EOF'
 set timeout 60
 
-spawn systemd-nspawn -q --network-bridge=$env(IIAB_BRIDGE) --resolv-conf=replace-static -D $env(MOUNT_DIR) -M box --boot
+spawn systemd-nspawn -q --network-bridge=$env(IIAB_BRIDGE) --resolv-conf=off -D $env(MOUNT_DIR) -M box --boot
 
 expect "login: " { send "root\r" }
 expect -re {#\s?$} { send "ssh-keygen -A\r" }
@@ -372,12 +372,6 @@ spawn systemd-nspawn -q --network-bridge=$env(IIAB_BRIDGE) --resolv-conf=off -D 
 
 expect "login: " { send "root\r" }
 expect -re {#\s?$} { send "export PAGER=cat SYSTEMD_PAGER=cat\r" }
-
-# Configure network manually (systemd-networkd may not be running in cloud image)
-expect -re {#\s?$} { send "ip addr add $env(IIAB_IP)/24 dev host0\r" }
-expect -re {#\s?$} { send "ip link set host0 up\r" }
-expect -re {#\s?$} { send "ip route add default via $env(IIAB_GW)\r" }
-expect -re {#\s?$} { send "rm -f /etc/resolv.conf && printf 'nameserver 8.8.8.8\\nnameserver 1.1.1.1\\n' > /etc/resolv.conf\r" }
 
 # Debian cloud image prep: generate SSH host keys (Ansible starts SSH later; needed on Debian)
 expect -re {#\s?$} { send "ssh-keygen -A\r" }
