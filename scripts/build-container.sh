@@ -119,9 +119,13 @@ ensure_storage() {
 
 # Cleanup on exit or failure
 cleanup() {
-    # Remove build snapshot if build didn't complete
-    if btrfs subvolume show "$BUILDS_DIR/$NAME" >/dev/null; then
-        btrfs subvolume delete "$BUILDS_DIR/$NAME" >/dev/null || true
+    # Remove build snapshot only if build failed
+    if [ "${BUILD_SUCCESS:-false}" = "true" ]; then
+        return 0
+    fi
+    if btrfs subvolume show "$BUILDS_DIR/$NAME" >/dev/null 2>&1; then
+        echo "Cleanup: removing failed build snapshot $NAME"
+        btrfs subvolume delete "$BUILDS_DIR/$NAME" >/dev/null 2>&1 || true
     fi
     # Unmount storage if we mounted it
     if [ "${DID_MOUNT:-false}" = "true" ] && mountpoint -q "$STORAGE_ROOT" 2>/dev/null; then
@@ -526,6 +530,7 @@ fi
 
 # Prevent cleanup from deleting our successful build
 # (cleanup trap deletes the snapshot on failure)
+BUILD_SUCCESS=true
 
 ###############################################################################
 # Step 5: Register the image
