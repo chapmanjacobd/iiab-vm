@@ -197,11 +197,11 @@ if [ -z "$BASE_NAME" ]; then
         fi
         echo "Found disk image: $raw_image"
 
-        # Use systemd-dissect to extract the root filesystem
-        echo "Extracting root filesystem using systemd-dissect..."
+        # Use systemd-dissect to mount and extract the root filesystem
+        echo "Extracting root filesystem using systemd-dissect --mount..."
         extract_dir=$(mktemp -d "$DEMO_BASE_DIR/debian-extract.XXXXXX")
-        systemd-dissect --copy-from="$raw_image" / "$extract_dir" || {
-            echo "Error: systemd-dissect extraction failed" >&2
+        systemd-dissect --mount --mkdir "$raw_image" "$extract_dir" || {
+            echo "Error: systemd-dissect mount failed" >&2
             rm -rf "$tmpdir" "$extract_dir"
             exit 1
         }
@@ -209,7 +209,11 @@ if [ -z "$BASE_NAME" ]; then
         echo "Creating base subvolume..."
         btrfs subvolume create "$STORAGE_ROOT/base-debian"
         cp -a --reflink=auto "$extract_dir"/. "$STORAGE_ROOT/base-debian/"
-        rm -rf "$tmpdir" "$extract_dir"
+
+        # Unmount and cleanup
+        systemd-dissect --umount "$extract_dir" || true
+        rmdir "$extract_dir" 2>/dev/null || true
+        rm -rf "$tmpdir"
 
         rm -f "$STORAGE_ROOT/base-debian"/etc/machine-id "$STORAGE_ROOT/base-debian/etc/hostname"
         btrfs property set "$STORAGE_ROOT/base-debian" ro true
