@@ -11,11 +11,7 @@ ACTIVE_DIR="$STATE_DIR/active"
 RESOURCE_FILE="$STATE_DIR/resources"
 # Network config is defined in scripts/lib-iiab.sh (IIAB_DEMO_SUBNET, IIAB_SUBNET_BASE, etc.)
 
-# Compute SCRIPT_DIR correctly whether executed or sourced.
-# When sourced, BASH_SOURCE[0] is the caller's file, so fall back to ${BASH_SOURCE[-1]}.
-_demctl_source="${BASH_SOURCE[-1]}"
-SCRIPT_DIR="$(cd "$(dirname "$_demctl_source")" && pwd)/scripts"
-unset _demctl_source
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts"
 
 # shellcheck source=scripts/lib-iiab.sh disable=SC1091
 source "$SCRIPT_DIR/lib-iiab.sh"
@@ -73,13 +69,17 @@ cleanup_failed_build() {
     if [ -f "$demo_dir/build.watchdog" ]; then
         local wpid
         wpid=$(cat "$demo_dir/build.watchdog" 2>/dev/null || true)
-        [ -n "$wpid" ] && kill "$wpid" 2>/dev/null || true
+        if [ -n "$wpid" ]; then
+            kill "$wpid" 2>/dev/null || true
+        fi
         rm -f "$demo_dir/build.watchdog"
     fi
     if [ -f "$demo_dir/build.pid" ]; then
         local pid
         pid=$(cat "$demo_dir/build.pid" 2>/dev/null || true)
-        [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
+        if [ -n "$pid" ]; then
+            kill "$pid" 2>/dev/null || true
+        fi
         rm -f "$demo_dir/build.pid"
     fi
     rm -rf "$demo_dir"
