@@ -411,9 +411,32 @@ cmd_build() {
 
     # Check if demo already exists (under lock)
     if [ -d "$ACTIVE_DIR/$name" ]; then
-        echo "Error: demo '$name' already exists. Use 'democtl rebuild $name' to recreate." >&2
-        release_lock
-        return 1
+        # Check if this is an interrupted/failed build that can be safely cleaned up
+        local status_file="$ACTIVE_DIR/$name/status"
+        local status="unknown"
+        if [ -f "$status_file" ]; then
+            status=$(cat "$status_file" 2>/dev/null || echo "unknown")
+        fi
+        
+        case "$status" in
+            pending|building)
+                echo "Warning: demo '$name' has an interrupted build (status: $status)." >&2
+                echo "  Cleaning up failed build and retrying..." >&2
+                cleanup_failed_build "$name"
+                # Continue with fresh build
+                ;;
+            failed)
+                echo "Warning: demo '$name' previously failed (status: $status)." >&2
+                echo "  Cleaning up and retrying..." >&2
+                cleanup_failed_build "$name"
+                # Continue with fresh build
+                ;;
+            *)
+                echo "Error: demo '$name' already exists (status: $status). Use 'democtl rebuild $name' to recreate." >&2
+                release_lock
+                return 1
+                ;;
+        esac
     fi
 
     # Resource pre-flight (under lock)
@@ -615,13 +638,13 @@ build_demo() {
 }
 
 ###############################################################################
-# democtl remove
+# democtl delete
 ###############################################################################
-cmd_remove() {
+cmd_delete() {
     ensure_root "$@"
     if [ $# -eq 0 ]; then
         echo "Error: at least one demo name required" >&2
-        echo "Usage: democtl remove <name> [name ...]" >&2
+        echo "Usage: democtl delete <name> [name ...]" >&2
         return 1
     fi
 
@@ -696,10 +719,10 @@ cmd_remove() {
         # Release lock
         release_lock
 
-        echo "Demo '$name' removed."
+        echo "Demo '$name' deleted."
     done
 
-    # Reload systemd and regenerate nginx once after all removals
+    # Reload systemd and regenerate nginx once after all deletions
     systemctl daemon-reload
     if [ -x "$SCRIPT_DIR/nginx-gen.sh" ]; then
         bash "$SCRIPT_DIR/nginx-gen.sh"
@@ -905,7 +928,7 @@ cmd_rebuild() {
             done
         ) )"
 
-        cmd_remove "$name" || { exit_code=1; continue; }
+        cmd_delete "$name" || { exit_code=1; continue; }
 
         # Re-add with saved config
         local add_args=("$name")
@@ -1072,7 +1095,7 @@ cmd_status() {
                 if [ "$age_sec" -gt 1800 ]; then
                     echo ""
                     echo "WARNING: Build log hasn't been updated for $(( age_sec / 60 )) minutes."
-                    echo "  The build may be hung. Consider: democtl remove $name"
+                    echo "  The build may be hung. Consider: democtl delete $name"
                 fi
             fi
         fi
@@ -1323,12 +1346,12 @@ cmd_stop() {
                 continue
                 ;;
             building|pending)
-                echo "Error: demo '$name' is being built (status: $status). Use 'democtl remove $name' to cancel." >&2
+                echo "Error: demo '$name' is being built (status: $status). Use 'democtl delete $name' to cancel." >&2
                 exit_code=1
                 continue
                 ;;
             failed)
-                echo "Error: demo '$name' has failed. Use 'democtl remove $name' to clean up." >&2
+                echo "Error: demo '$name' has failed. Use 'democtl delete $name' to clean up." >&2
                 exit_code=1
                 continue
                 ;;
@@ -1521,8 +1544,8 @@ Usage: democtl <command> [args]
 Commands:
   init                          Bootstrap host (install packages, network, nginx)
   build <name> [flags]          Build a demo (leaves it stopped; use --start to bring online)
-  remove <name> [name ...]      Stop and delete demo(s)
-  rebuild <name> [name ...]     Remove and re-build demo(s)
+  delete <name> [name ...]      Stop and delete demo(s)
+  rebuild <name> [name ...]     Delete and re-build demo(s)
   rebuild --all                 Rebuild ALL demos from scratch (fresh storage + Debian base)
   list                          Show all demos
   status <name> [name ...]      Detailed status for demo(s)
@@ -1559,7 +1582,7 @@ Examples:
   democtl stop small
   democtl start small
   democtl restart small
-  democtl remove pr3612
+  democtl delete pr3612
   democtl start small medium large
 EOF
 }
@@ -1574,7 +1597,7 @@ main() {
     case "$cmd" in
         init)      cmd_init "$@" ;;
         build)     cmd_build "$@" ;;
-        remove)    cmd_remove "$@" ;;
+        delete)    cmd_delete "$@" ;;
         rebuild)   cmd_rebuild "$@" ;;
         list)      cmd_list "$@" ;;
         status)    cmd_status "$@" ;;

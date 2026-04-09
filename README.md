@@ -19,8 +19,8 @@ The `democtl` tool is the primary interface for managing demos.
 | Command                     | Description                                |
 | --------------------------- | ------------------------------------------ |
 | `build <name> [flags]`      | Build a new demo                           |
-| `remove <name> [name ...]`  | Stop and delete demo(s)                    |
-| `rebuild <name> [name ...]` | Remove and re-build demo(s)                |
+| `delete <name> [name ...]`  | Stop and delete demo(s)                    |
+| `rebuild <name> [name ...]` | Delete and re-build demo(s)                |
 | `list`                      | Show all demos and resource usage          |
 | `status <name>`             | Detailed status for a demo                 |
 | `logs <name>`               | Show build log or container journal        |

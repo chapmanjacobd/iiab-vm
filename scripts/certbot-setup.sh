@@ -73,14 +73,37 @@ echo "Will obtain certificates for: ${DOMAINS[*]}"
 echo ""
 echo "=== Obtaining Let's Encrypt certificates ==="
 
+CERT_OBTAINED=0
+CERT_SKIPPED=0
+CERT_FAILED=0
+
 for domain in "${DOMAINS[@]}"; do
     CERT_PATH="/etc/letsencrypt/live/$domain/fullchain.pem"
-    
+
     if [ -f "$CERT_PATH" ]; then
-        echo "Certificate already exists for $domain"
-        continue
+        # Check if certificate is expiring soon (within 30 days)
+        if command -v openssl >/dev/null 2>&1; then
+            expiry_date=$(openssl x509 -enddate -noout -in "$CERT_PATH" 2>/dev/null | cut -d= -f2 || echo "")
+            if [ -n "$expiry_date" ]; then
+                expiry_epoch=$(date -d "$expiry_date" +%s 2>/dev/null || echo 0)
+                now_epoch=$(date +%s)
+                days_left=$(( (expiry_epoch - now_epoch) / 86400 ))
+
+                if [ "$days_left" -gt 30 ]; then
+                    echo "Certificate valid for $domain (${days_left} days remaining) -- skipping"
+                    CERT_SKIPPED=$((CERT_SKIPPED + 1))
+                    continue
+                else
+                    echo "Certificate for $domain expires in ${days_left} days -- will renew"
+                fi
+            fi
+        else
+            echo "Certificate already exists for $domain -- skipping"
+            CERT_SKIPPED=$((CERT_SKIPPED + 1))
+            continue
+        fi
     fi
-    
+
     echo "Obtaining certificate for $domain..."
     if certbot certonly \
         --webroot \
@@ -91,11 +114,16 @@ for domain in "${DOMAINS[@]}"; do
         --non-interactive \
         -d "$domain"; then
         echo "Certificate obtained for $domain"
+        CERT_OBTAINED=$((CERT_OBTAINED + 1))
     else
         echo "Warning: Failed to obtain certificate for $domain" >&2
         echo "  Check that nginx is running and ACME challenges are accessible" >&2
+        CERT_FAILED=$((CERT_FAILED + 1))
     fi
 done
+
+echo ""
+echo "Certificate summary: $CERT_OBTAINED obtained, $CERT_SKIPPED already valid, $CERT_FAILED failed"
 
 ###############################################################################
 # 4. Setup certbot renewal timer (idempotent)

@@ -1,11 +1,7 @@
-# IIAB Whitelabel Demo Server
-# CLI wrapper with convenience targets
+.PHONY: help init install small medium large status test test-concurrency test-e2e test-nginx test-all stop start restart logs clean
 
-.PHONY: help init install small medium large status test test-concurrency test-e2e test-nginx test-all stop clean
-
-# Default target
 help:
-	bash democtl help
+	cat Makefile
 
 # Full one-time setup: init → build demos → wait for builds → start → obtain SSL certs
 small-medium-large:
@@ -47,42 +43,12 @@ status:
 	@if [ -n "$(NAME)" ]; then \
 		bash democtl status "$(NAME)"; \
 	else \
-		bash democtl list; \
+		for dir in /var/lib/iiab-demos/active/*/; do \
+			[ -d "$$dir" ] || continue; \
+			name=$$(basename "$$dir"); \
+			bash democtl status "$$name"; \
+		done; \
 	fi
-
-# Testing
-test:
-	@echo "Checking syntax..."
-	bash -n democtl
-	for f in scripts/*.sh; do bash -n "$$f"; done
-	@echo "Running shellcheck..."
-	shellcheck democtl scripts/*.sh
-	@echo "Testing help..."
-	bash democtl help >/dev/null
-	@echo "All local tests passed."
-
-# Individual test targets
-test-concurrency:
-	@echo "Running concurrency tests..."
-	bash tests/test-concurrency.sh
-
-test-e2e:
-	@echo "Running e2e tests..."
-	bash tests/test-e2e.sh
-
-test-nginx:
-	@echo "Running nginx generation tests..."
-	bash tests/test-nginx-gen.sh
-
-# Run all tests
-test-all: test
-	@echo ""
-	@echo "=== Running all test suites ==="
-	bash tests/test-concurrency.sh
-	bash tests/test-e2e.sh
-	bash tests/test-nginx-gen.sh
-	@echo ""
-	@echo "✅ All test suites completed successfully."
 
 # Stop all running demos
 stop:
@@ -93,9 +59,37 @@ stop:
 		bash democtl stop "$$name" 2>/dev/null || true; \
 	done
 
+# Start all built demos
+start:
+	@for dir in /var/lib/iiab-demos/active/*/; do \
+		[ -d "$$dir" ] || continue; \
+		name=$$(basename "$$dir"); \
+		echo "Starting $$name..."; \
+		bash democtl start "$$name"; \
+	done
+
+# Restart all running demos
+restart: stop start
+
+# Show logs for all demos (pass NAME= to filter, LINES=N for tail)
+logs:
+	@if [ -n "$(NAME)" ]; then \
+		bash democtl logs "$(NAME)" --lines=$(or $(LINES),50); \
+	else \
+		for dir in /var/lib/iiab-demos/active/*/; do \
+			[ -d "$$dir" ] || continue; \
+			name=$$(basename "$$dir"); \
+			echo "=== $$name ==="; \
+			bash democtl logs "$$name" --lines=$(or $(LINES),50); \
+		done; \
+	fi
+
 # Full cleanup
-clean:
-	bash democtl remove small 2>/dev/null || true
-	bash democtl remove medium 2>/dev/null || true
-	bash democtl remove large 2>/dev/null || true
+delete:
+	@for dir in /var/lib/iiab-demos/active/*/; do \
+		[ -d "$$dir" ] || continue; \
+		name=$$(basename "$$dir"); \
+		echo "Deleting $$name..."; \
+		bash democtl delete "$$name" 2>/dev/null || true; \
+	done
 	@echo "All demos removed."

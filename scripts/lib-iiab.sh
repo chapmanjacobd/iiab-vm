@@ -166,6 +166,8 @@ setup_nftables_nat() {
 #
 # This function is PURE nftables -- no iptables interaction.
 # It uses the inet iiab table with priority filter - 1 to take precedence.
+#
+# IDEMPOTENCY: Checks if rules are already applied correctly before recreating.
 add_container_isolation() {
     local subnet="${IIAB_DEMO_SUBNET}"
     local host_ip="${IIAB_GW}"
@@ -174,6 +176,14 @@ add_container_isolation() {
     # Detect external interface for NAT/internet-bound rules
     local ext_if
     ext_if=$(ip route | grep default | awk '{print $5}' | head -n1)
+
+    # Idempotency check: check if isolation rules are already correctly applied
+    if _isolation_rules_active "$ext_if"; then
+        echo "Container isolation rules already active -- skipping"
+        return 0
+    fi
+
+    echo "Applying container isolation rules..."
 
     # Ensure the table exists
     nft add table inet iiab 2>/dev/null || true
@@ -218,6 +228,53 @@ add_container_isolation() {
     nft add rule bridge iiab forward iifname "vb-*" oifname "ve-*" drop
 
     echo "Configured nftables isolation (bridge) and host-access (inet) rules"
+}
+
+# Check if isolation rules are already correctly applied (internal helper)
+_isolation_rules_active() {
+    local ext_if="${1:-}"
+
+    # Check inet iiab table exists
+    if ! nft list table inet iiab >/dev/null 2>&1; then
+        return 1
+    fi
+
+    # Check forward chain exists with correct priority
+    if ! nft list chain inet iiab forward 2>/dev/null | grep -qE "type filter hook forward priority (filter - 1|-1)"; then
+        return 1
+    fi
+
+    # Check input chain exists
+    if ! nft list chain inet iiab input 2>/dev/null | grep -qE "type filter hook input priority (filter - 1|-1)"; then
+        return 1
+    fi
+
+    # Check bridge iiab table exists
+    if ! nft list table bridge iiab >/dev/null 2>&1; then
+        return 1
+    fi
+
+    # Check bridge forward chain has drop rules for container interfaces
+    local bridge_rules
+    bridge_rules=$(nft list chain bridge iiab forward 2>/dev/null || echo "")
+    if ! echo "$bridge_rules" | grep -q "drop"; then
+        return 1
+    fi
+
+    # Check inet forward has accept rules
+    local inet_forward
+    inet_forward=$(nft list chain inet iiab forward 2>/dev/null || echo "")
+    if ! echo "$inet_forward" | grep -q "accept"; then
+        return 1
+    fi
+
+    # Check established/related rule exists
+    if ! echo "$inet_forward" | grep -q "ct state established,related accept"; then
+        return 1
+    fi
+
+    # All checks passed
+    return 0
 }
 # Remove all IIAB nftables rules
 remove_container_isolation() {

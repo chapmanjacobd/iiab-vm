@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # test-e2e.sh - End-to-end tests for democtl demo lifecycle
-# Tests: build, list, status, remove, rebuild, and config validation
+# Tests: build, list, status, delete, rebuild, and config validation
 # Note: These tests require root and simulate full demo operations
 # shellcheck disable=SC2329
 set -euo pipefail
@@ -133,7 +133,7 @@ EXIT_CODE=$?
 assert_equals "0" "$EXIT_CODE" "Help command exits successfully"
 assert_contains "$OUTPUT" "Usage:" "Help shows usage"
 assert_contains "$OUTPUT" "build" "Help shows build command"
-assert_contains "$OUTPUT" "remove" "Help shows remove command"
+assert_contains "$OUTPUT" "delete" "Help shows delete command"
 assert_contains "$OUTPUT" "list" "Help shows list command"
 
 # Test 2: democtl list (empty state)
@@ -219,14 +219,14 @@ assert_contains "$OUTPUT" "demo-failed" "List shows failed demo"
 
 # Test 5: Demo removal
 echo ""
-echo "Test 5: Demo removal"
+echo "Test 5: Demo deletion"
 setup_test_env
 
 # Create a demo
-DEMO_DIR="$ACTIVE_DIR/to-remove"
+DEMO_DIR="$ACTIVE_DIR/to-delete"
 mkdir -p "$DEMO_DIR"
 cat > "$DEMO_DIR/config" << EOF
-DEMO_NAME="to-remove"
+DEMO_NAME="to-delete"
 IIAB_REPO="https://github.com/iiab/iiab.git"
 IIAB_BRANCH="master"
 IMAGE_SIZE_MB=2000
@@ -235,18 +235,18 @@ BUILD_ON_DISK=false
 SKIP_INSTALL=false
 LOCAL_VARS=""
 WILDCARD=false
-DESCRIPTION="Demo to remove"
+DESCRIPTION="Demo to delete"
 EOF
 echo "10.0.3.5" > "$DEMO_DIR/ip"
 echo "pending" > "$DEMO_DIR/status"
 
-assert_dir_exists "$DEMO_DIR" "Demo exists before removal"
+assert_dir_exists "$DEMO_DIR" "Demo exists before deletion"
 
-# Remove the demo
-cmd_remove to-remove 2>&1
+# Delete the demo
+cmd_delete to-delete 2>&1
 
-assert_file_not_exists "$DEMO_DIR/config" "Demo config removed"
-assert_file_not_exists "$DEMO_DIR/ip" "Demo IP file removed"
+assert_file_not_exists "$DEMO_DIR/config" "Demo config deleted"
+assert_file_not_exists "$DEMO_DIR/ip" "Demo IP file deleted"
 
 # Test 6: Multiple demos resource tracking
 echo ""
@@ -378,16 +378,16 @@ assert_contains "$OUTPUT" "status-demo" "Status shows demo name"
 assert_contains "$OUTPUT" "running" "Status shows demo status"
 assert_contains "$OUTPUT" "10.0.3.15" "Status shows demo IP"
 
-# Test 10: Invalid demo name in status/remove
+# Test 10: Invalid demo name in status/delete
 echo ""
 echo "Test 10: Invalid demo name handling"
 setup_test_env
 
 OUTPUT_STATUS=$(cmd_status nonexistent-demo 2>&1 || true)
-OUTPUT_REMOVE=$(cmd_remove nonexistent-demo 2>&1 || true)
+OUTPUT_DELETE=$(cmd_delete nonexistent-demo 2>&1 || true)
 
 assert_contains "$OUTPUT_STATUS" "not found" "Status shows error for nonexistent demo"
-assert_contains "$OUTPUT_REMOVE" "not found" "Remove shows error for nonexistent demo"
+assert_contains "$OUTPUT_DELETE" "not found" "Delete shows error for nonexistent demo"
 
 # Test 11: Demo with special characters in description
 echo ""

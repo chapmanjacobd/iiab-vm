@@ -157,29 +157,39 @@ EXT_IF=$(ip route | grep default | awk '{print $5}' | head -n1)
 if [ -z "$EXT_IF" ]; then
     echo "Warning: Could not detect external interface, skipping networking" >&2
 else
-    # Flush only IIAB-managed nftables tables (avoid destroying other firewall configs)
-    echo "Flushing IIAB nftables tables..."
-    nft delete table inet iiab 2>/dev/null || true
-    nft delete table bridge iiab 2>/dev/null || true
-
-    # Flush Docker's iptables FORWARD DROP policy so our containers can reach the internet
-    if command -v iptables >/dev/null 2>&1; then
-        echo "Resetting iptables FORWARD policy to ACCEPT..."
-        iptables -P FORWARD ACCEPT 2>/dev/null || true
+    # Check if NAT rules are already correctly configured
+    NAT_EXISTS=false
+    if nft list chain inet iiab postrouting 2>/dev/null | grep -q "masquerade"; then
+        NAT_EXISTS=true
     fi
 
-    echo "Firewall state cleared"
+    if $NAT_EXISTS; then
+        echo "NAT masquerade rules already configured -- skipping"
+    else
+        # Flush only IIAB-managed nftables tables (avoid destroying other firewall configs)
+        echo "Flushing IIAB nftables tables..."
+        nft delete table inet iiab 2>/dev/null || true
+        nft delete table bridge iiab 2>/dev/null || true
 
-    if ! setup_nftables_nat "$EXT_IF"; then
-        echo "ERROR: NAT setup failed, restoring safe FORWARD policy" >&2
-        iptables -P FORWARD DROP 2>/dev/null || true
-        exit 1
-    fi
+        # Flush Docker's iptables FORWARD DROP policy so our containers can reach the internet
+        if command -v iptables >/dev/null 2>&1; then
+            echo "Resetting iptables FORWARD policy to ACCEPT..."
+            iptables -P FORWARD ACCEPT 2>/dev/null || true
+        fi
 
-    if ! add_container_isolation; then
-        echo "ERROR: Isolation rules setup failed, restoring safe FORWARD policy" >&2
-        iptables -P FORWARD DROP 2>/dev/null || true
-        exit 1
+        echo "Firewall state cleared"
+
+        if ! setup_nftables_nat "$EXT_IF"; then
+            echo "ERROR: NAT setup failed, restoring safe FORWARD policy" >&2
+            iptables -P FORWARD DROP 2>/dev/null || true
+            exit 1
+        fi
+
+        if ! add_container_isolation; then
+            echo "ERROR: Isolation rules setup failed, restoring safe FORWARD policy" >&2
+            iptables -P FORWARD DROP 2>/dev/null || true
+            exit 1
+        fi
     fi
 fi
 

@@ -132,10 +132,32 @@ grow_storage_file() {
 
     # Grow if needed
     if [ "$target_gb" -gt "$current_size_gb" ]; then
+        # Safeguard: check if any containers are using this storage before unmounting
+        local active_containers=0
+        if mountpoint -q "$STORAGE_ROOT" 2>/dev/null; then
+            # Check if any systemd-nspawn containers are using subvolumes from this storage
+            for machine in $(machinectl list --no-legend 2>/dev/null | awk '{print $1}' || true); do
+                local root_path
+                root_path=$(machinectl show "$machine" -p RootDirectory --value 2>/dev/null || echo "")
+                if [[ "$root_path" == "$STORAGE_ROOT"* ]] || [[ "$root_path" == "$BUILDS_DIR"* ]]; then
+                    active_containers=$((active_containers + 1))
+                fi
+            done
+
+            if [ "$active_containers" -gt 0 ]; then
+                echo "WARNING: $active_containers container(s) actively using storage -- cannot grow during runtime" >&2
+                echo "  Current storage.btrfs size: ${current_size_gb}G, needed: ${target_gb}G" >&2
+                echo "  Stop containers first, then rebuild to resize storage" >&2
+                return 1
+            fi
+        fi
+
         echo "Growing storage.btrfs from ${current_size_gb}G to ${target_gb}G..."
         umount -l "$STORAGE_ROOT" 2>/dev/null || true
         truncate -s "${target_gb}G" "$STORAGE_BTRFS"
         # Remount will happen below in ensure_storage
+    else
+        echo "Storage.btrfs already ${current_size_gb}G (sufficient for ${needed_mb}MB build)"
     fi
 }
 
