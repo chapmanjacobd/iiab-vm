@@ -65,7 +65,7 @@ release_lock() {
     flock -u "$LOCK_FD" 2>/dev/null || true
 }
 
-# Clean up a failed build: remove directory and reclaim the IP slot.
+# Clean up a failed build: remove directory, reclaim the IP slot, and clean build artifacts.
 # MUST be called under lock.
 cleanup_failed_build() {
     local name="$1"
@@ -89,7 +89,83 @@ cleanup_failed_build() {
         rm -f "$demo_dir/build.pid"
     fi
     rm -rf "$demo_dir"
+
+    # Clean up leftover lock files in the builds directory (from flock or external tools)
+    local builds_dirs=("/run/iiab-demos/storage/builds" "/var/iiab-demos/storage/builds")
+    for bdir in "${builds_dirs[@]}"; do
+        if [ -d "$bdir" ]; then
+            # Remove emacs-style lock files (.#<name>.lck) and plain .lck files
+            rm -f "$bdir/.#${name}.lck" "$bdir/.${name}.lck" "$bdir/${name}.lck"
+        fi
+    done
+
     log_demo "$name" "Cleanup complete (directory and IP slot reclaimed)"
+}
+
+###############################################################################
+# Dynamic storage growth (MUST be called under lock)
+###############################################################################
+grow_storage() {
+    local build_on_disk="$1"
+    local needed_mb="$2"
+
+    local storage_btrfs storage_root
+    if [ "$build_on_disk" = "true" ]; then
+        storage_btrfs="/var/iiab-demos/storage.btrfs"
+        storage_root="/var/iiab-demos/storage"
+    else
+        storage_btrfs="/run/iiab-demos/storage.btrfs"
+        storage_root="/run/iiab-demos/storage"
+    fi
+
+    # Must be mounted for btrfs filesystem df to work
+    if ! mountpoint -q "$storage_root" 2>/dev/null; then
+        return 1
+    fi
+
+    local current_size_gb=0
+    if [ -f "$storage_btrfs" ]; then
+        local size_bytes
+        size_bytes=$(stat -c%s "$storage_btrfs" 2>/dev/null || echo 0)
+        current_size_gb=$(( size_bytes / 1073741824 ))
+    fi
+
+    local btrfs_used
+    btrfs_used=$(btrfs filesystem df "$storage_root" 2>/dev/null | \
+        awk '/Data, single/ {match($0, /used=([0-9.]+)([A-Za-z]+)/, a); if (a[2]=="GiB") printf "%d", a[1]*1024; else if (a[2]=="MiB") printf "%d", a[1]; else print 0}' || echo 0)
+    local needed_total_mb=$(( ${btrfs_used:-0} + needed_mb + 2048 ))  # 2GB headroom
+    local target_gb=$(( (needed_total_mb + 1023) / 1024 ))
+
+    # Enforce a reasonable minimum (matching INITIAL_SIZE_GB in build-container.sh)
+    local min_gb=20
+    if [ "$target_gb" -lt "$min_gb" ]; then
+        target_gb=$min_gb
+    fi
+
+    if [ "$target_gb" -le "$current_size_gb" ]; then
+        echo "Storage already ${current_size_gb}G (sufficient for ${needed_mb}MB build)"
+        return 0
+    fi
+
+    # Check if any containers are actively using this storage
+    for machine in $(machinectl list --no-legend 2>/dev/null | awk '{print $1}' || true); do
+        local root_path
+        root_path=$(machinectl show "$machine" -p RootDirectory --value 2>/dev/null || echo "")
+        if [[ "$root_path" == "$storage_root"* ]]; then
+            echo "Warning: container '$machine' is using storage -- cannot resize" >&2
+            return 1
+        fi
+    done
+
+    echo "Growing ${storage_btrfs} from ${current_size_gb}G to ${target_gb}G..."
+    umount -l "$storage_root" 2>/dev/null || true
+    truncate -s "${target_gb}G" "$storage_btrfs"
+    if [ "$build_on_disk" = "true" ]; then
+        mount -o loop,compress-force=zstd:1,noatime,discard=async "$storage_btrfs" "$storage_root"
+    else
+        mount -o loop,noatime "$storage_btrfs" "$storage_root"
+    fi
+    echo "Storage grown to ${target_gb}G ($(df -h "$storage_root" | awk 'NR==2 {print $4}') available)"
 }
 
 ###############################################################################
@@ -231,34 +307,29 @@ check_resources() {
 
     load_resources
 
-    # All builds use storage.btrfs -- check available space
+    # Determine available space. When the relevant storage is mounted (loop-mounted
+    # sparse btrfs file), df on the mount point is authoritative -- it sees the
+    # full virtual size of the sparse file. btrfs filesystem df only reports
+    # already-allocated chunks, which underreports available space.
     local storage_avail
     if [ "$build_on_disk" = "true" ]; then
-        storage_avail=$(df -m /var 2>/dev/null | awk 'NR==2 {print $4}' || echo 0)
-    else
-        # /run is tmpfs - check available RAM
-        local avail_ram
-        avail_ram=$(awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo)
-        local already_allocated=0
-        if [ -f /run/iiab-demos/storage.btrfs ]; then
-            already_allocated=$(du -sm /run/iiab-demos/storage.btrfs 2>/dev/null | cut -f1 || echo 0)
+        if mountpoint -q /var/iiab-demos/storage 2>/dev/null; then
+            storage_avail=$(df -m /var/iiab-demos/storage 2>/dev/null | awk 'NR==2 {print $4}' || echo 0)
+        else
+            storage_avail=$(df -m /var 2>/dev/null | awk 'NR==2 {print $4}' || echo 0)
         fi
-        storage_avail=$(( avail_ram - already_allocated ))
-    fi
-
-    # If storage is mounted, use btrfs filesystem df for more accurate accounting
-    local storage_mount=""
-    if [ -f /run/iiab-demos/storage.btrfs ] && mountpoint -q /run/iiab-demos/storage 2>/dev/null; then
-        storage_mount="/run/iiab-demos/storage"
-    elif [ -f /var/iiab-demos/storage.btrfs ] && mountpoint -q /var/iiab-demos/storage 2>/dev/null; then
-        storage_mount="/var/iiab-demos/storage"
-    fi
-    if [ -n "$storage_mount" ]; then
-        local btrfs_free
-        btrfs_free=$(btrfs filesystem df "$storage_mount" 2>/dev/null | \
-            awk '/Data, single/ {match($0, /total=([0-9.]+)([A-Za-z]+)/, t); match($0, /used=([0-9.]+)([A-Za-z]+)/, u); t_mb=(t[2]=="GiB"?t[1]*1024:t[1]); u_mb=(u[2]=="GiB"?u[1]*1024:u[1]); free=t_mb-u_mb; printf "%d", (free>0?free:0)}' || echo 0)
-        if [ "$btrfs_free" -gt 0 ] && [ "$btrfs_free" -lt "$storage_avail" ]; then
-            storage_avail=$btrfs_free
+    else
+        if mountpoint -q /run/iiab-demos/storage 2>/dev/null; then
+            storage_avail=$(df -m /run/iiab-demos/storage 2>/dev/null | awk 'NR==2 {print $4}' || echo 0)
+        else
+            # Unmounted tmpfs build -- check available RAM minus existing btrfs file size
+            local avail_ram
+            avail_ram=$(awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo)
+            local already_allocated=0
+            if [ -f /run/iiab-demos/storage.btrfs ]; then
+                already_allocated=$(du -sm /run/iiab-demos/storage.btrfs 2>/dev/null | cut -f1 || echo 0)
+            fi
+            storage_avail=$(( avail_ram - already_allocated ))
         fi
     fi
 
@@ -450,8 +521,15 @@ cmd_build() {
 
     # Resource pre-flight (under lock)
     if ! check_resources "$name" "$size_mb" "$build_on_disk"; then
-        release_lock
-        return 1
+        # Try to grow storage to accommodate the build
+        echo "Attempting to grow storage..."
+        if grow_storage "$build_on_disk" "$size_mb" && \
+           check_resources "$name" "$size_mb" "$build_on_disk"; then
+            echo "Storage resized successfully, proceeding with build."
+        else
+            release_lock
+            return 1
+        fi
     fi
 
     # Assign IP (under lock)
@@ -583,10 +661,15 @@ build_demo() {
     fi
     # shellcheck disable=SC2153  # Variables are set via source from config file
     if ! check_resources "$name" "$IMAGE_SIZE_MB" "${BUILD_ON_DISK:-false}"; then
-        log_demo "$name" "Resources no longer available, aborting build"
-        cleanup_failed_build "$name"
-        release_lock
-        return 1
+        # Try to grow storage one last time before build
+        if ! grow_storage "${BUILD_ON_DISK:-false}" "$IMAGE_SIZE_MB" || \
+           ! check_resources "$name" "$IMAGE_SIZE_MB" "${BUILD_ON_DISK:-false}"; then
+            log_demo "$name" "Resources no longer available, aborting build"
+            cleanup_failed_build "$name"
+            release_lock
+            return 1
+        fi
+        log_demo "$name" "Storage grown to accommodate build"
     fi
     release_lock
 
