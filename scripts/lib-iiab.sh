@@ -27,7 +27,8 @@ IIAB_DEMO_SUBNET="${IIAB_SUBNET_BASE}.0/24"
 # Ensure the script is running as root (re-execs with sudo if needed)
 ensure_root() {
     if [ "$EUID" -ne 0 ]; then
-        exec sudo "$0" "$@"
+        # Use absolute path to preserve correct script execution
+        exec sudo "$(readlink -f "$0")" "$@"
     fi
 }
 
