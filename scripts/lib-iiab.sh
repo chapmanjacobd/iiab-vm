@@ -142,8 +142,11 @@ setup_nftables_nat() {
     # Ensure the table exists
     nft add table inet iiab 2>/dev/null || true
 
-    # Create postrouting chain if it doesn't exist, or flush if it does
-    nft add chain inet iiab postrouting '{ type nat hook postrouting priority srcnat; policy accept; }' 2>/dev/null || true
+    # Create postrouting chain only if it doesn't already exist
+    if ! nft list chain inet iiab postrouting >/dev/null 2>&1; then
+        nft add chain inet iiab postrouting '{ type nat hook postrouting priority srcnat; policy accept; }'
+    fi
+    # Flush to remove any stale masquerade rules before re-adding
     nft flush chain inet iiab postrouting
 
     # Add masquerade rule
@@ -158,7 +161,12 @@ setup_nftables_nat() {
 # It uses the inet iiab table with priority filter - 1 to take precedence.
 add_container_isolation() {
     local subnet="${IIAB_DEMO_SUBNET}"
+    local host_ip="${IIAB_GW}"
     local bridge="${IIAB_BRIDGE}"
+
+    # Detect external interface for NAT/internet-bound rules
+    local ext_if
+    ext_if=$(ip route | grep default | awk '{print $5}' | head -n1)
 
     # Ensure the table exists
     nft add table inet iiab 2>/dev/null || true
@@ -175,14 +183,19 @@ add_container_isolation() {
     # A. Allow established/related traffic
     nft add rule inet iiab forward ct state established,related accept
 
-    # B. Allow container -> Host and Internet (NAT)
-    nft add rule inet iiab forward iifname "{ $bridge, ve-*, vb-* }" accept
+    # B. Allow container -> Host gateway (DNS, Nginx proxy)
+    nft add rule inet iiab forward iifname "{ ve-*, vb-* }" ip daddr "$host_ip" accept
 
-    # C. Allow host -> container (for reverse proxy and health checks)
-    nft add rule inet iiab forward oifname "{ $bridge, ve-*, vb-* }" ip daddr "$subnet" accept
+    # C. Allow container -> Internet (NAT'd traffic exiting external interface)
+    if [ -n "$ext_if" ]; then
+        nft add rule inet iiab forward iifname "{ ve-*, vb-* }" oifname "$ext_if" accept
+    fi
+
+    # D. Allow host -> container (for reverse proxy and health checks)
+    nft add rule inet iiab forward oifname "{ ve-*, vb-* }" ip daddr "$subnet" accept
 
     # INPUT rules (to allow containers to reach host services like DNS/Nginx)
-    nft add rule inet iiab input iifname "{ $bridge, ve-*, vb-* }" accept
+    nft add rule inet iiab input iifname "{ ve-*, vb-* }" accept
     nft add rule inet iiab input ct state established,related accept
 
     # L2 (bridge) rules for intra-bridge isolation
