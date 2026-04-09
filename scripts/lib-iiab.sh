@@ -113,11 +113,18 @@ EOF
         changed=true
     fi
 
-    # 3. Restart networkd if config changed or bridge missing
-    if $changed || ! ip link show "$bridge" >/dev/null 2>&1; then
+    # 3. Check if bridge is already up with the correct IP
+    local bridge_up=false
+    if ip link show "$bridge" >/dev/null 2>&1 && ip addr show "$bridge" | grep -qF "$gw"; then
+        echo "Bridge $bridge already up with IP $gw -- no action needed"
+        bridge_up=true
+    fi
+
+    # 4. Only restart networkd if config changed AND bridge is not already configured
+    if ! $bridge_up && $changed; then
         echo "Applying bridge configuration..."
         systemctl restart systemd-networkd
-        
+
         # Wait for bridge to appear
         local count=0
         while ! ip link show "$bridge" >/dev/null 2>&1 && [ $count -lt 10 ]; do
@@ -127,8 +134,7 @@ EOF
     fi
 
     # Ensure IP is actually assigned if it wasn't by networkd yet
-    sleep 1
-    if ! ip addr show "$bridge" | grep -q "$gw"; then
+    if ! ip addr show "$bridge" 2>/dev/null | grep -qF "$gw"; then
         echo "Manually assigning IP $gw to $bridge..."
         ip addr add "$gw/24" dev "$bridge" 2>/dev/null || true
         ip link set "$bridge" up
