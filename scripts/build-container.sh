@@ -277,25 +277,30 @@ echo "$NAME" > "$MOUNT_DIR/etc/hostname"
 # Set default target to multi-user (no GUI needed in containers)
 ln -sf /usr/lib/systemd/system/multi-user.target "$MOUNT_DIR/etc/systemd/system/default.target"
 
-# Configure container IP via systemd-networkd inside the image
+# Configure container networking via systemd one-shot service
+# (More reliable than systemd-networkd in cloud images)
 # With --network-bridge, nspawn creates a veth pair:
 #   host side: vb-<machine> bridged to iiab-br0
 #   container side: host0
-mkdir -p "$MOUNT_DIR/etc/systemd/network"
-cat > "$MOUNT_DIR/etc/systemd/network/ve-default.network" << EOF
-[Match]
-Name=host0 host-* eth0 ve-*
+cat > "$MOUNT_DIR/etc/systemd/system/iiab-network-setup.service" << EOF
+[Unit]
+Description=Configure IIAB container network
+Before=network-online.target
+Wants=network-online.target
 
-[Network]
-Address=$IP/24
-Gateway=$IIAB_GW
-IPForward=no
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/ip addr add $IP/24 dev host0
+ExecStart=/usr/sbin/ip link set host0 up
+ExecStart=/usr/sbin/ip route add default via $IIAB_GW
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
 EOF
+ln -sf /etc/systemd/system/iiab-network-setup.service "$MOUNT_DIR/etc/systemd/system/multi-user.target.wants/iiab-network-setup.service"
 
-# Ensure systemd-networkd is enabled in the rootfs
-ln -sf /usr/lib/systemd/system/systemd-networkd.service "$MOUNT_DIR/etc/systemd/system/multi-user.target.wants/systemd-networkd.service"
-
-# Remove symlink if present (Debian often symlinks to /run/systemd/resolve/stub-resolv.conf)
+# Write resolv.conf directly
 rm -f "$MOUNT_DIR/etc/resolv.conf"
 cat > "$MOUNT_DIR/etc/resolv.conf" << EOF
 nameserver 8.8.8.8
@@ -365,6 +370,13 @@ echo "=== Network diagnostics ==="
 ip addr show 2>&1 || true
 ip route show 2>&1 || true
 cat /etc/resolv.conf 2>&1 || true
+echo "=== systemd-networkd status ==="
+systemctl is-active systemd-networkd 2>&1 || true
+systemctl status systemd-networkd 2>&1 || true
+journalctl -u systemd-networkd --no-pager -n 20 2>&1 || true
+echo "=== .network files ==="
+ls -la /etc/systemd/network/ 2>&1 || true
+cat /etc/systemd/network/*.network 2>&1 || true
 echo "=== Waiting for default route... ==="
 for i in $(seq 1 30); do
     if ip route show | grep -q default; then
