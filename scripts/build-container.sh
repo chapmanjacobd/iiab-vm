@@ -175,17 +175,41 @@ if [ -z "$BASE_NAME" ]; then
         # Download and extract Debian into a temp dir, then copy into subvolume
         tmpdir=$(mktemp -d "$DEMO_BASE_DIR/debian-base.XXXXXX")
         tar_url="https://cloud.debian.org/images/cloud/trixie/latest/debian-13-nocloud-amd64.tar.xz"
-        echo "Downloading and extracting Debian 13 nocloud rootfs..."
+        echo "Downloading and extracting Debian 13 nocloud raw image..."
         curl -fL "$tar_url" | tar -xJ -C "$tmpdir" || {
             echo "Error: Failed to download/extract Debian rootfs" >&2
             rm -rf "$tmpdir"
             exit 1
         }
 
+        # Find the .raw disk image
+        raw_image=$(find "$tmpdir" -name "*.raw" -type f | head -1)
+        if [ -z "$raw_image" ]; then
+            # Fallback: try .qcow2
+            raw_image=$(find "$tmpdir" -name "*.qcow2" -type f | head -1)
+            if [ -z "$raw_image" ]; then
+                echo "Error: No .raw or .qcow2 image found in tarball" >&2
+                echo "Tar contents:" >&2
+                find "$tmpdir" -type f | head -20 >&2
+                rm -rf "$tmpdir"
+                exit 1
+            fi
+        fi
+        echo "Found disk image: $raw_image"
+
+        # Use systemd-dissect to extract the root filesystem
+        echo "Extracting root filesystem using systemd-dissect..."
+        extract_dir=$(mktemp -d "$DEMO_BASE_DIR/debian-extract.XXXXXX")
+        systemd-dissect --copy-from="$raw_image" / "$extract_dir" || {
+            echo "Error: systemd-dissect extraction failed" >&2
+            rm -rf "$tmpdir" "$extract_dir"
+            exit 1
+        }
+
         echo "Creating base subvolume..."
         btrfs subvolume create "$STORAGE_ROOT/base-debian"
-        cp -a --reflink=auto "$tmpdir"/. "$STORAGE_ROOT/base-debian/"
-        rm -rf "$tmpdir"
+        cp -a --reflink=auto "$extract_dir"/. "$STORAGE_ROOT/base-debian/"
+        rm -rf "$tmpdir" "$extract_dir"
 
         rm -f "$STORAGE_ROOT/base-debian"/etc/machine-id "$STORAGE_ROOT/base-debian/etc/hostname"
         btrfs property set "$STORAGE_ROOT/base-debian" ro true
@@ -205,6 +229,21 @@ BUILD_SUBVOL="$BUILDS_DIR/$NAME"
 echo "Creating CoW snapshot of $BASE_SUBVOL..."
 btrfs subvolume snapshot "$BASE_MOUNT/$BASE_SUBVOL" "$BUILD_SUBVOL"
 echo "Build rootfs: $BUILD_SUBVOL ($(du -sh "$BUILD_SUBVOL" | cut -f1))"
+
+# Verify the snapshot has expected root structure
+echo "Verifying base subvolume structure..."
+REQUIRED_FILES="/etc/os-release /usr /bin /sbin /lib"
+for f in $REQUIRED_FILES; do
+    if [ ! -e "$BUILD_SUBVOL$f" ]; then
+        echo "Error: Expected path $f not found in snapshot!" >&2
+        echo "Snapshot contents (top-level):" >&2
+        ls -la "$BUILD_SUBVOL" >&2
+        echo "Error: /etc/os-release missing - this usually means tar extracted to a subdirectory" >&2
+        echo "  Check the 'Tar extraction contents' output above to confirm" >&2
+        exit 1
+    fi
+done
+echo "Base subvolume structure verified (os-release found)"
 
 ###############################################################################
 # Step 2: Prepare the container rootfs
@@ -355,6 +394,9 @@ else
 
     systemd-firstboot --root="$BUILD_SUBVOL" --delete-root-password --force
 
+    # Ensure /root directory exists (Debian nocloud images may not have it)
+    mkdir -p "$BUILD_SUBVOL/root"
+
     cat > "$BUILD_SUBVOL/root/run_build.sh" << 'EOF_SCRIPT'
 #!/bin/bash
 set -euo pipefail
@@ -372,6 +414,12 @@ chmod 0755 /usr/sbin/iiab
 EOF_SCRIPT
     chmod +x "$BUILD_SUBVOL/root/run_build.sh"
 
+    # Verify the script was written correctly
+    if [ ! -f "$BUILD_SUBVOL/root/run_build.sh" ]; then
+        echo "Error: Failed to write run_build.sh to container rootfs" >&2
+        exit 1
+    fi
+
     export BUILD_SUBVOL IIAB_BRIDGE IIAB_GW IIAB_IP=$IP
     expect << 'EXPECT_EOF'
 set timeout 7200
@@ -381,6 +429,20 @@ spawn systemd-nspawn -q --network-bridge=$env(IIAB_BRIDGE) --resolv-conf=off -D 
 expect "login: " { send "root\r" }
 expect -re {#\s?$} { send "export PAGER=cat SYSTEMD_PAGER=cat\r" }
 expect -re {#\s?$} { send "ssh-keygen -A\r" }
+expect -re {#\s?$} { send "test -f /root/run_build.sh && echo 'BUILD_SCRIPT_FOUND' || echo 'BUILD_SCRIPT_MISSING'\r" }
+expect {
+    "BUILD_SCRIPT_FOUND" {
+        puts "Build script found in container"
+    }
+    "BUILD_SCRIPT_MISSING" {
+        puts "\nError: /root/run_build.sh not found in container!"
+        exit 1
+    }
+    timeout {
+        puts "\nTimed out waiting for build script check"
+        exit 1
+    }
+}
 expect -re {#\s?$} { send "/root/run_build.sh; echo \"BUILD_EXIT_CODE:\$?\"\r" }
 
 expect {
