@@ -27,8 +27,15 @@ IIAB_DEMO_SUBNET="${IIAB_SUBNET_BASE}.0/24"
 # Ensure the script is running as root (re-execs with sudo if needed)
 ensure_root() {
     if [ "$EUID" -ne 0 ]; then
-        # Use absolute path to preserve correct script execution
-        exec sudo "$(readlink -f "$0")" "$@"
+        # Use saved script path and original args to preserve correct execution.
+        # _DEMOCTL_SCRIPT and _DEMOCTL_ORIG_ARGS are set by democtl at startup
+        # to survive function-level shifts that would otherwise lose $@.
+        if [ -n "${_DEMOCTL_SCRIPT:-}" ] && [ "${#_DEMOCTL_ORIG_ARGS[@]:-0}" -gt 0 ]; then
+            exec sudo "$_DEMOCTL_SCRIPT" "${_DEMOCTL_ORIG_ARGS[@]}"
+        else
+            # Fallback: use $0 and $@ directly (works when called from main scope)
+            exec sudo "$(readlink -f "$0")" "$@"
+        fi
     fi
 }
 
@@ -48,8 +55,12 @@ ensure_dirs() {
 # Test nginx config and reload; falls back to verbose test on failure
 nginx_reload() {
     if nginx -t 2>/dev/null; then
-        systemctl reload nginx
-        echo "Nginx reloaded successfully"
+        if systemctl is-active --quiet nginx 2>/dev/null; then
+            systemctl reload nginx
+            echo "Nginx reloaded successfully"
+        else
+            echo "nginx.service is not active, cannot reload."
+        fi
     else
         echo "Warning: nginx config test failed, not reloading" >&2
         nginx -t >&2
@@ -62,8 +73,9 @@ sanitize_subdomain() {
     local raw="$1"
     local cleaned
     cleaned=$(echo "$raw" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')
-    cleaned="${cleaned#-}"
-    cleaned="${cleaned%-}"
+    # Strip ALL leading and trailing hyphens (not just one)
+    while [[ "$cleaned" == -* ]]; do cleaned="${cleaned#-}"; done
+    while [[ "$cleaned" == *- ]]; do cleaned="${cleaned%-}"; done
     if [ -z "$cleaned" ]; then
         echo "demo"
     else

@@ -14,8 +14,16 @@ NGINX_CONF="/etc/nginx/sites-available/iiab-demo.conf"
 CERTBOT_ROOT="/var/www/certbot"
 
 # Flock to prevent concurrent nginx config writes/reloads
+# NOTE: Uses FD 202. democtl uses FD 200. These are separate locks for
+# separate purposes. If this script is ever sourced into democtl in the
+# future, be aware of potential FD collision and consider aligning to a
+# single shared lock FD or using file-based locking instead.
 NGINX_LOCK="/var/lib/iiab-demos/.nginx-gen.lock"
 NGINX_LOCK_FD=202
+
+# --- NGINX_GEN_TESTABLE_START ---
+# All code below this marker is testable generation logic.
+# The test harness extracts from this marker to avoid fragile line-number offsets.
 
 acquire_nginx_lock() {
     eval "exec $NGINX_LOCK_FD>$NGINX_LOCK"

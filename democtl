@@ -3,6 +3,12 @@
 # Usage: democtl <command> [args]
 set -euo pipefail
 
+# Save original script path and arguments before any function shifts them.
+# Used by ensure_root() in lib-iiab.sh for correct re-execution.
+_DEMOCTL_SCRIPT="$(readlink -f "$0")"
+# shellcheck disable=SC2034
+_DEMOCTL_ORIG_ARGS=("$@")
+
 ###############################################################################
 # Constants and state paths
 ###############################################################################
@@ -158,7 +164,10 @@ next_ip() {
     local used_ips=()
     if [ -d "$ACTIVE_DIR" ]; then
         while IFS= read -r ip_file; do
-            used_ips+=("$(cat "$ip_file")")
+            # Skip empty or partially-written ip files (concurrent builds)
+            if [ -s "$ip_file" ]; then
+                used_ips+=("$(cat "$ip_file")")
+            fi
         done < <(find "$ACTIVE_DIR" -name ip -type f 2>/dev/null)
     fi
 
@@ -299,7 +308,6 @@ cmd_build() {
     # Parse arguments
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            build) shift ;;  # skip 'build' from parsed args
             --branch)     branch="$2"; shift 2 ;;
             --repo)       repo="$2"; shift 2 ;;
             --size)       size_mb="$2"; shift 2 ;;
@@ -1196,6 +1204,14 @@ cmd_shell() {
         return 1
     fi
 
+    local shell_status
+    shell_status=$(cat "$ACTIVE_DIR/$name/status" 2>/dev/null || echo "unknown")
+    if [ "$shell_status" != "running" ]; then
+        echo "Error: demo '$name' is not running (status: $shell_status)" >&2
+        echo "  Start it first: democtl start $name" >&2
+        return 1
+    fi
+
     # Use systemd-run for shell, as machinectl shell is essentially a wrapper around it
     systemd-run -it --machine="$name" /bin/bash
 }
@@ -1274,14 +1290,18 @@ cmd_settle() {
         if $all_settled; then
             echo ""
             echo ""
-            echo "All demos have settled."
-            echo "  Running: $running"
-            echo "  Stopped: $stopped"
             if [ ${#failed[@]} -gt 0 ]; then
+                echo "Demos have settled -- some failed."
+                echo "  Running: $running"
+                echo "  Stopped: $stopped"
                 echo "  Failed: ${failed[*]}"
                 return 1
+            else
+                echo "All demos have settled."
+                echo "  Running: $running"
+                echo "  Stopped: $stopped"
+                return 0
             fi
-            return 0
         fi
 
         sleep "$poll_interval"
@@ -1405,6 +1425,18 @@ cmd_stop() {
         if ! systemctl disable "systemd-nspawn@${name}.service" 2>/dev/null; then
             echo "Warning: Could not disable systemd-nspawn@${name}.service (may not be registered)"
         fi
+
+        # Poll to confirm the service is actually stopped before writing status
+        local stop_poll=0
+        while [ "$stop_poll" -lt 10 ]; do
+            local svc_state
+            svc_state=$(systemctl is-active "systemd-nspawn@${name}.service" 2>/dev/null || echo "inactive")
+            if [ "$svc_state" = "inactive" ] || [ "$svc_state" = "failed" ]; then
+                break
+            fi
+            stop_poll=$((stop_poll + 1))
+            sleep 0.5
+        done
         echo "stopped" > "$demo_dir/status"
         echo "Demo '$name' has been stopped."
     done

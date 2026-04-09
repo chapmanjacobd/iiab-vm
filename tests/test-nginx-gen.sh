@@ -24,7 +24,7 @@ setup_test_env() {
     # Override state dirs
     export STATE_DIR="$TEST_STATE_DIR"
     export ACTIVE_DIR="$TEST_STATE_DIR/active"
-    
+
     # Override nginx conf path for testing
     export TEST_NGINX_CONF
 }
@@ -134,6 +134,16 @@ EOF
 # We'll create a wrapper script that captures the generated config
 create_mock_nginx_gen() {
     local output_conf="$1"
+    local lock_file="$TEST_STATE_DIR/.nginx-lock"
+
+    # Ensure lock file exists before the mock tries to open it
+    touch "$lock_file"
+
+    # Extract testable code from nginx-gen.sh using marker comment (not line numbers)
+    # This finds everything from the NGINX_GEN_TESTABLE_START marker to end of file
+    local testable_code
+    testable_code=$(sed -n '/^# --- NGINX_GEN_TESTABLE_START ---$/,$ p' "$NGINX_GEN")
+
     cat > "/tmp/mock-nginx-gen.sh" << EOFMOCK
 #!/usr/bin/env bash
 # Mock nginx-gen.sh that writes to test output instead of real nginx
@@ -147,8 +157,7 @@ STATE_DIR="$TEST_STATE_DIR"
 ACTIVE_DIR="$TEST_STATE_DIR/active"
 NGINX_CONF="$output_conf"
 CERTBOT_ROOT="/var/www/certbot"
-NGINX_LOCK="/tmp/.mock-nginx-lock"
-
+NGINX_LOCK="$lock_file"
 NGINX_LOCK_FD=202
 
 # Mock nginx_reload
@@ -157,11 +166,10 @@ nginx_reload() {
     return 0
 }
 
-# Source the actual generation logic
+# Source the actual generation logic (from marker in nginx-gen.sh)
+$testable_code
 EOFMOCK
 
-    # Append the generation logic from nginx-gen.sh (include lock functions, skip header/imports)
-    tail -n +20 "$NGINX_GEN" >> "/tmp/mock-nginx-gen.sh"
     chmod +x "/tmp/mock-nginx-gen.sh"
 }
 

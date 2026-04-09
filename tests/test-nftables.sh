@@ -88,7 +88,7 @@ assert_equals "test-demo" "$result2" "Hyphen preserved"
 assert_equals "test123" "$result3" "Numbers preserved"
 assert_equals "leading" "$result4" "Leading hyphen removed"
 assert_equals "trailing" "$result5" "Trailing hyphen removed"
-assert_equals "-" "$result6" "Only hyphens reduces to single hyphen"
+assert_equals "demo" "$result6" "Only hyphens reduces to empty, becomes 'demo'"
 assert_equals "demo" "$result7" "Empty string becomes 'demo'"
 
 # Test 3: ensure_dirs function

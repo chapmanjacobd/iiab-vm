@@ -43,6 +43,15 @@ if [ -d "$ACTIVE_DIR" ]; then
         [ -d "$demo_dir" ] || continue
         demo_name=$(basename "$demo_dir")
 
+        # Skip demos that are not yet ready for cert issuance
+        demo_status=$(cat "$demo_dir/status" 2>/dev/null || echo "unknown")
+        case "$demo_status" in
+            building|pending|starting|stopping)
+                echo "Skipping '$demo_name' (status: $demo_status -- not ready for cert issuance)"
+                continue
+                ;;
+        esac
+
         # Read subdomain from config
         if [ -f "$demo_dir/config" ]; then
             # shellcheck source=/dev/null
@@ -51,7 +60,7 @@ if [ -d "$ACTIVE_DIR" ]; then
         else
             subdomain="$demo_name"
         fi
-        
+
         domain="${subdomain}.iiab.io"
         DOMAINS+=("$domain")
         echo "Found domain: $domain"

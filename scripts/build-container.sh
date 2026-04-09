@@ -196,9 +196,10 @@ cleanup() {
         echo "Cleanup: removing failed build snapshot $NAME"
         btrfs subvolume delete "$BUILDS_DIR/$NAME" >/dev/null 2>&1 || true
     fi
-    # Unmount alternate storage if we mounted it
-    if [ "${ALT_DID_MOUNT:-false}" = "true" ] && [ -n "${ALT_MOUNT:-}" ] && mountpoint -q "$ALT_MOUNT" 2>/dev/null; then
+    # Unmount alternate storage if we mounted it (file-based flag survives subshells)
+    if [ -f "${STATE_FILE_ALT_MOUNT:-}" ] && [ -n "${ALT_MOUNT:-}" ] && mountpoint -q "$ALT_MOUNT" 2>/dev/null; then
         umount -l "$ALT_MOUNT" 2>/dev/null || true
+        rm -f "$STATE_FILE_ALT_MOUNT" 2>/dev/null || true
     fi
     # Note: primary storage mount is intentionally left mounted here -- it may be shared
     # across builds. The OS cleans up tmpfs mounts on process exit.
@@ -247,7 +248,9 @@ copy_subvolume_from_alternate() {
     if ! mountpoint -q "$alt_mount" 2>/dev/null; then
         mkdir -p "$alt_mount"
         mount -o loop,noatime "$alt_storage" "$alt_mount"
-        ALT_DID_MOUNT=true
+        # Use file-based flag so cleanup trap can see it even across subshells
+        STATE_FILE_ALT_MOUNT="${DEMO_BASE_DIR}/.alt_mounted"
+        touch "$STATE_FILE_ALT_MOUNT"
     fi
 
     if ! btrfs subvolume show "$alt_mount/$subvol_name" >/dev/null 2>&1; then
@@ -285,7 +288,6 @@ copy_subvolume_from_alternate() {
 # try to copy it from the alternate storage.btrfs.
 ALT_STORAGE=""
 ALT_MOUNT=""
-ALT_DID_MOUNT=false
 if [ "$BUILD_ON_DISK" = "true" ]; then
     # We're on disk; alternate is RAM
     ALT_STORAGE="/run/iiab-demos/storage.btrfs"
