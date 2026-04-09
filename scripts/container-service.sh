@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
 # container-service.sh - Create systemd service files for an IIAB container
 # Usage:
-#   container-service.sh <name> <ip> [--volatile=MODE] [--ram-image]
+#   container-service.sh <name> <ip> [--volatile=MODE]
 #
-# --volatile=MODE  Controls the Volatile= setting:
+# --volatile=MODE  Controls rootfs persistence:
 #   no      -- Persistent rootfs. All changes survive restarts.
-#   overlay -- Overlayfs with tmpfs upper. Changes discarded on stop. Works with any rootfs.
-#   state   -- Volatile /etc and /usr, persistent /var. Requires bootable /usr-only system.
-#   yes     -- Full volatile rootfs. Everything resets on boot. Requires bootable /usr-only system.
+#   overlay -- Overlayfs with tmpfs upper. Changes discarded on stop.
+#   state   -- Volatile /etc and /usr, persistent /var.
+#   yes     -- Full volatile rootfs. Everything resets on boot.
 #
 # Default (from democtl): overlay
 #
-# --ram-image  Image is loaded into host tmpfs. Container boots from RAM,
-#              never reads from disk after initial copy.
+# The container rootfs is a btrfs subvolume at /var/lib/machines/<name>.
+# systemd-nspawn's --volatile= is used directly — it works with directory
+# rootfs the same way it works with image files.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -23,8 +24,7 @@ NAME="${1:?Error: container name required}"
 IP="${2:?Error: IP address required}"
 shift 2 || true
 
-VOLATILE="no"
-RAM_IMAGE=false
+VOLATILE="overlay"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -35,15 +35,20 @@ while [[ $# -gt 0 ]]; do
                 exit 1
             fi
             ;;
-        --ram-image)
-            RAM_IMAGE=true
-            ;;
         *)
             echo "Warning: Unknown option: $1" >&2
             ;;
     esac
     shift
 done
+
+# Validate the rootfs exists
+ROOTFS="/var/lib/machines/$NAME"
+if [ ! -d "$ROOTFS" ]; then
+    echo "Error: Container rootfs not found: $ROOTFS" >&2
+    echo "  Build it first: democtl build $NAME" >&2
+    exit 1
+fi
 
 # Create nspawn settings directory
 SETTINGS_DIR="/etc/systemd/nspawn"
@@ -71,27 +76,20 @@ ${FILES_SECTION}
 EOF
 
 echo "Created ${SETTINGS_DIR}/${NAME}.nspawn"
+echo "  Rootfs:    $ROOTFS"
 echo "  IP:        ${IP}"
 echo "  Volatile:  ${VOLATILE}"
-echo "  RAM image: ${RAM_IMAGE}"
 
 # Create systemd service override
 SERVICE_OVERRIDE="/etc/systemd/system/systemd-nspawn@${NAME}.service.d"
 mkdir -p "$SERVICE_OVERRIDE"
 
-if [[ "$VOLATILE" != "no" ]] || $RAM_IMAGE; then
-    RESTART_POLICY="always"
-else
-    RESTART_POLICY="on-failure"
-fi
-
 cat > "${SERVICE_OVERRIDE}/override.conf" << EOF
 [Service]
-Restart=${RESTART_POLICY}
+Restart=on-failure
 RestartSec=30
 
-# Filesystem restrictions - ProtectSystem=full protects /usr and /boot
-# but allows writes to /etc and /var where nspawn needs access
+# Filesystem restrictions
 ProtectSystem=full
 ProtectHome=yes
 ProtectKernelTunables=yes
@@ -100,21 +98,21 @@ ProtectKernelLogs=yes
 ProtectClock=yes
 ProtectHostname=yes
 
-# Process visibility - only expose PID info
+# Process visibility
 ProcSubset=pid
 ProtectProc=invisible
 
-# Device access - restrict to only what nspawn needs
+# Device access
 DevicePolicy=closed
 DeviceAllow=char-random rw
 
 # Privilege restrictions
 NoNewPrivileges=yes
 
-# Restrict socket families to what's needed for web services + netlink for networking
+# Restrict socket families
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK AF_PACKET
 
-# Syscall architecture - only allow native syscalls
+# Syscall architecture
 SystemCallArchitectures=native
 
 # Memory restrictions

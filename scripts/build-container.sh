@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # build-container.sh - Build an IIAB container image with arbitrary config
 #
-# All builds happen in RAM by default (tmpfs), producing zero disk I/O.
-# Uses btrfs CoW snapshots to share a common Debian base across builds.
-# After shrinking, the image is either kept in RAM (--ram-image) or
-# copied to persistent disk. Use --build-on-disk to override.
+# Builds use btrfs CoW snapshots within a single storage.btrfs file.
+# The storage file lives in /run/iiab-demos/ (tmpfs, default) or
+# /var/iiab-demos/ (disk, --build-on-disk).
+#
+# Output: a read-only subvolume at <storage>/builds/<name>, symlinked
+#         from /var/lib/machines/<name> for systemd-nspawn discovery.
 #
 # Usage:
 #   build-container.sh --name <name> \
@@ -24,11 +26,11 @@ IIAB_BRANCH="master"
 SIZE_MB=15000
 VOLATILE="overlay"
 IP=""
-RAM_IMAGE=false
 LOCAL_VARS=""
 BUILD_ON_DISK=false
 SKIP_INSTALL=false
 CONFIG_PATH=""
+BASE_NAME=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -39,11 +41,11 @@ while [[ $# -gt 0 ]]; do
         --size)       SIZE_MB="$2"; shift 2 ;;
         --volatile)   VOLATILE="$2"; shift 2 ;;
         --ip)         IP="$2"; shift 2 ;;
-        --ram-image)  RAM_IMAGE=true; shift ;;
         --local-vars) LOCAL_VARS="$2"; shift 2 ;;
         --build-on-disk) BUILD_ON_DISK=true; shift ;;
         --skip-install) SKIP_INSTALL=true; shift ;;
         --config)     CONFIG_PATH="$2"; shift 2 ;;
+        --base)       BASE_NAME="$2"; shift 2 ;;
         *)
             echo "Warning: Unknown option: $1" >&2
             shift
@@ -71,150 +73,137 @@ echo "Building IIAB container: $NAME"
 echo "=========================================="
 echo "Branch:       $IIAB_BRANCH"
 echo "Repo:         $IIAB_REPO"
-echo "Size:         ${SIZE_MB}MB"
+echo "Size:         ${SIZE_MB}MB (capacity)"
 echo "Volatile:     $VOLATILE"
 echo "IP:           $IP"
-echo "RAM image:    $RAM_IMAGE"
 echo "Build on disk: $BUILD_ON_DISK"
 echo "Local vars:   ${LOCAL_VARS:-(none)}"
 
 ###############################################################################
-# Shared btrfs base image
+# Storage setup: single btrfs file with CoW snapshots
 ###############################################################################
-BASE_DIR="/var/lib/iiab-demos"
-BASE_BTRFS="$BASE_DIR/base-debian.btrfs"
-BASE_MOUNT="$BASE_DIR/base-debian"
+if $BUILD_ON_DISK; then
+    STORAGE_DIR="/var/iiab-demos"
+else
+    STORAGE_DIR="/run/iiab-demos"
+fi
+STORAGE_BTRFS="$STORAGE_DIR/storage.btrfs"
+STORAGE_MOUNT="$STORAGE_DIR/storage"
+BUILDS_DIR="$STORAGE_MOUNT/builds"
 
-# Prepare the shared Debian base btrfs image (runs once, then reused)
-prepare_base_image() {
-    if [ -f "$BASE_BTRFS" ]; then
-        echo "Base image already exists: $BASE_BTRFS"
+# Ensure storage.btrfs exists and is mounted
+ensure_storage() {
+    if mountpoint -q "$STORAGE_MOUNT" 2>/dev/null; then
         return 0
     fi
 
-    mkdir -p "$BASE_DIR"
+    mkdir -p "$STORAGE_DIR"
 
-    # Download Debian cloud image
-    local raw_file="$BASE_DIR/debian-13-generic-amd64.raw"
-    if [ ! -f "$raw_file" ]; then
-        echo "Downloading Debian 13 generic amd64 image..."
-        curl -fL -o "$raw_file" \
-            "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-generic-amd64.raw"
+    if [ ! -f "$STORAGE_BTRFS" ]; then
+        echo "Creating storage.btrfs at $STORAGE_BTRFS..."
+        if $BUILD_ON_DISK; then
+            # Disk storage: pre-allocate for performance
+            fallocate -l 50G "$STORAGE_BTRFS"
+            chattr +C "$STORAGE_BTRFS" 2>/dev/null || true
+        else
+            # RAM storage: sparse file in tmpfs (only allocates as written)
+            truncate -s 50G "$STORAGE_BTRFS"
+        fi
+        mkfs.btrfs -f -L iiab-demos "$STORAGE_BTRFS" >/dev/null 2>&1
     fi
 
-    # Create backing file for the btrfs base
-    echo "Creating base btrfs image: $BASE_BTRFS (5GB)..."
-    fallocate -l 5G "$BASE_BTRFS"
-    # Prevent nested CoW if host filesystem is btrfs
-    chattr +C "$BASE_BTRFS" 2>/dev/null || true
-
-    mkfs.btrfs -f -L debian-base "$BASE_BTRFS" >/dev/null 2>&1
-    mkdir -p "$BASE_MOUNT"
-    mount -o loop "$BASE_BTRFS" "$BASE_MOUNT"
-
-    # Extract rootfs from Debian .raw into btrfs using systemd-dissect
-    local extract_dir
-    extract_dir=$(mktemp -d /tmp/debian-extract.XXXXXX)
-    echo "Extracting Debian rootfs from .raw image..."
-    systemd-dissect -M "$raw_file" "$extract_dir" 2>/dev/null || {
-        echo "Error: systemd-dissect failed to mount $raw_file" >&2
-        umount "$BASE_MOUNT" 2>/dev/null || true
-        rm -rf "$BASE_MOUNT" "$BASE_BTRFS" "$extract_dir"
-        exit 1
-    }
-
-    echo "Copying rootfs into btrfs image..."
-    cp -a "$extract_dir/"* "$BASE_MOUNT/" 2>/dev/null || true
-    cp -a "$extract_dir/."[^.]* "$BASE_MOUNT/" 2>/dev/null || true
-
-    # Clean up
-    umount "$extract_dir" 2>/dev/null || true
-    rm -rf "$extract_dir"
-
-    # Clean up extracted image metadata
-    rm -f "$BASE_MOUNT"/etc/machine-id "$BASE_MOUNT"/etc/hostname
-
-    echo "Base image ready: $BASE_BTRFS ($(du -sh "$BASE_MOUNT" | cut -f1))"
+    mount -o loop "$STORAGE_BTRFS" "$STORAGE_MOUNT"
+    mkdir -p "$BUILDS_DIR"
 }
 
-###############################################################################
-# Build working directory (tmpfs by default)
-###############################################################################
-if $BUILD_ON_DISK; then
-    BUILD_DIR="/var/lib/iiab-demos/build/${NAME}"
-else
-    BUILD_DIR="/run/iiab-demos/build/${NAME}"
-fi
-MOUNT_DIR="${BUILD_DIR}/rootfs"
-# WORK_BTRFS is the btrfs image file for this build
-WORK_BTRFS="${BUILD_DIR}/work.btrfs"
-
-if ! $BUILD_ON_DISK && ! mountpoint -q "${BUILD_DIR%/*}" 2>/dev/null; then
-    mkdir -p "${BUILD_DIR%/*}"
-    echo "Mounting tmpfs at ${BUILD_DIR%/*} (${SIZE_MB}MB)..."
-    mount -t tmpfs -o "size=${SIZE_MB}M,mode=0755" tmpfs "${BUILD_DIR%/*}"
-fi
-mkdir -p "$BUILD_DIR" "$MOUNT_DIR"
-
-# Track whether we need to unmount tmpfs at end
-TMPFS_MOUNTED=false
-if ! $BUILD_ON_DISK && mountpoint -q "${BUILD_DIR%/*}" 2>/dev/null; then
-    TMPFS_MOUNTED=true
-fi
-
 # Cleanup on exit or failure
-LOOPDEV=""
 cleanup() {
-    if mountpoint -q "$MOUNT_DIR" 2>/dev/null; then
-        umount -l "$MOUNT_DIR" 2>/dev/null || true
+    # Remove build snapshot if build didn't complete
+    if btrfs subvolume show "$BUILDS_DIR/$NAME" >/dev/null 2>&1; then
+        btrfs subvolume delete "$BUILDS_DIR/$NAME" >/dev/null 2>&1 || true
     fi
-    if [ -n "$LOOPDEV" ] && losetup "$LOOPDEV" &>/dev/null; then
-        losetup --detach "$LOOPDEV" 2>/dev/null || true
-    fi
-    # For non-RAM builds from RAM, clean up only our own build tmpfs
-    if $TMPFS_MOUNTED && ! $RAM_IMAGE && mountpoint -q "$BUILD_DIR" 2>/dev/null; then
-        umount "$BUILD_DIR" 2>/dev/null || true
+    # Unmount storage if we mounted it
+    if [ "${DID_MOUNT:-false}" = "true" ] && mountpoint -q "$STORAGE_MOUNT" 2>/dev/null; then
+        umount -l "$STORAGE_MOUNT" 2>/dev/null || true
     fi
 }
 trap cleanup EXIT
 
-###############################################################################
-# Step 1: Snapshot Debian base into independent btrfs image
-###############################################################################
-echo ""
-echo "=== Step 1: Preparing Debian base from shared btrfs image ==="
+# Mount storage if not already mounted
+ensure_storage
+if ! mountpoint -q "$STORAGE_MOUNT" 2>/dev/null; then
+    mount -o loop "$STORAGE_BTRFS" "$STORAGE_MOUNT"
+    DID_MOUNT=true
+fi
+mkdir -p "$BUILDS_DIR"
 
-prepare_base_image
-
-# Mount the base btrfs if not already mounted
-if ! mountpoint -q "$BASE_MOUNT" 2>/dev/null; then
-    mkdir -p "$BASE_MOUNT"
-    mount -o loop "$BASE_BTRFS" "$BASE_MOUNT"
+# Resolve base subvolume
+if [ -n "$BASE_NAME" ]; then
+    if [[ "$BASE_NAME" == /* ]]; then
+        BASE_BTRFS="$BASE_NAME"
+        BASE_MOUNT="$STORAGE_DIR/$(basename "$BASE_NAME" .btrfs)"
+        BASE_SUBVOL="rootfs"
+    else
+        BASE_SUBVOL="$BASE_NAME"
+        BASE_BTRFS="$STORAGE_BTRFS"
+        BASE_MOUNT="$STORAGE_MOUNT"
+    fi
+else
+    BASE_SUBVOL="base-debian"
+    BASE_BTRFS="$STORAGE_BTRFS"
+    BASE_MOUNT="$STORAGE_MOUNT"
 fi
 
-# Create an independent btrfs file for this build (starts small, grows on demand)
-# The backing file is sparse -- actual space used matches written data
-echo "Creating build btrfs image: $WORK_BTRFS (${SIZE_MB}MB capacity)..."
-fallocate -l 0 "$WORK_BTRFS"
-truncate -s "${SIZE_MB}M" "$WORK_BTRFS"
-mkfs.btrfs -f -L "$NAME" "$WORK_BTRFS" >/dev/null 2>&1
+# Mount external base if needed
+if [ -n "${BASE_BTRFS:-}" ] && [[ "$BASE_BTRFS" != "$STORAGE_BTRFS" ]]; then
+    if ! mountpoint -q "$BASE_MOUNT" 2>/dev/null; then
+        mkdir -p "$BASE_MOUNT"
+        mount -o loop "$BASE_BTRFS" "$BASE_MOUNT"
+    fi
+fi
 
-# Mount the build image
-mkdir -p "$MOUNT_DIR"
-mount -o loop "$WORK_BTRFS" "$MOUNT_DIR"
+###############################################################################
+# Step 1: Prepare base (CoW snapshot)
+###############################################################################
+echo ""
+echo "=== Step 1: Preparing base ==="
 
-# Receive the base into our build image via btrfs send (creates independent copy)
-# The base data is transferred efficiently; the build image is now standalone
-echo "Receiving base snapshot into build image..."
-btrfs subvolume snapshot -r "$BASE_MOUNT" "$BASE_MOUNT/.iiab-send-snap" >/dev/null
-btrfs send "$BASE_MOUNT/.iiab-send-snap" | btrfs receive -d "$MOUNT_DIR" rootfs >/dev/null 2>&1
-btrfs subvolume delete "$BASE_MOUNT/.iiab-send-snap" >/dev/null 2>&1 || true
+# Prepare the Debian base subvolume if needed
+if [ -z "$BASE_NAME" ]; then
+    if ! btrfs subvolume show "$STORAGE_MOUNT/base-debian" >/dev/null 2>&1; then
+        # Download and extract Debian into a temp dir, then copy into subvolume
+        tmpdir=$(mktemp -d "$STORAGE_DIR/debian-base.XXXXXX")
+        tar_url="https://cloud.debian.org/images/cloud/trixie/latest/debian-13-nocloud-amd64.tar.xz"
+        echo "Downloading and extracting Debian 13 nocloud rootfs..."
+        curl -fL "$tar_url" | tar -xJ -C "$tmpdir" 2>/dev/null || {
+            echo "Error: Failed to download/extract Debian rootfs" >&2
+            rm -rf "$tmpdir"
+            exit 1
+        }
 
-# Remount so $MOUNT_DIR is the rootfs directly (no subvolume path needed in Steps 2-3)
-umount "$MOUNT_DIR"
-mount -o loop,subvol=rootfs "$WORK_BTRFS" "$MOUNT_DIR"
+        echo "Creating base subvolume..."
+        btrfs subvolume create "$STORAGE_MOUNT/base-debian"
+        cp -a --reflink=auto "$tmpdir"/. "$STORAGE_MOUNT/base-debian/"
+        rm -rf "$tmpdir"
 
-echo "Base image snapshot ready at $MOUNT_DIR ($(du -sh "$MOUNT_DIR" | cut -f1))"
+        rm -f "$STORAGE_MOUNT/base-debian"/etc/machine-id "$STORAGE_MOUNT/base-debian/etc/hostname"
+        btrfs property set "$STORAGE_MOUNT/base-debian" ro true
+        echo "Base subvolume ready: $STORAGE_MOUNT/base-debian ($(du -sh "$STORAGE_MOUNT/base-debian" | cut -f1))"
+    else
+        echo "Base subvolume already exists: $STORAGE_MOUNT/base-debian"
+    fi
+else
+    if ! btrfs subvolume show "$BASE_MOUNT/$BASE_SUBVOL" >/dev/null 2>&1; then
+        echo "Error: Base subvolume not found: $BASE_SUBVOL" >&2
+        exit 1
+    fi
+fi
+
+# Create CoW snapshot for this build
+MOUNT_DIR="$BUILDS_DIR/$NAME"
+echo "Creating CoW snapshot of $BASE_SUBVOL..."
+btrfs subvolume snapshot "$BASE_MOUNT/$BASE_SUBVOL" "$MOUNT_DIR" >/dev/null
+echo "Build rootfs: $MOUNT_DIR ($(du -sh "$MOUNT_DIR" | cut -f1))"
 
 ###############################################################################
 # Step 2: Prepare the container rootfs
@@ -238,20 +227,16 @@ else
 fi
 
 # Resolve local_vars path
-# Priority: (1) relative path from host cwd → copy into image, (2) path inside IIAB repo
 if [ -n "$LOCAL_VARS" ]; then
     if [[ "$LOCAL_VARS" != /* ]] && [ -f "$LOCAL_VARS" ]; then
-        # Relative path exists on host -- copy into the IIAB repo inside the image
         RELATIVE_VARS_DIR=$(dirname "$LOCAL_VARS")
         mkdir -p "$MOUNT_DIR/opt/iiab/iiab/$RELATIVE_VARS_DIR"
         cp --preserve=mode,timestamps "$LOCAL_VARS" "$MOUNT_DIR/opt/iiab/iiab/$LOCAL_VARS"
         IIAB_VARS_PATH="$LOCAL_VARS"
         echo "Copied local_vars from host: $LOCAL_VARS → IIAB repo in image"
     elif [[ "$LOCAL_VARS" != /* ]]; then
-        # Relative path but file not on host -- assume it's relative to IIAB repo root
         IIAB_VARS_PATH="$LOCAL_VARS"
     elif [[ "$LOCAL_VARS" == /* ]]; then
-        # Absolute path -- handled later by host-path fallback
         IIAB_VARS_PATH=""
     fi
 elif [ -z "$LOCAL_VARS" ]; then
@@ -286,20 +271,13 @@ if ! $VARS_COPIED; then
     exit 1
 fi
 
-# Set image-building flag so services know they're building an image (not running live)
-# This prevents service restarts during build and lets them use 'stopped' instead
-
 # Set hostname
 echo "$NAME" > "$MOUNT_DIR/etc/hostname"
 
-# Set default target to multi-user (no GUI needed in containers)
+# Set default target to multi-user
 ln -sf /usr/lib/systemd/system/multi-user.target "$MOUNT_DIR/etc/systemd/system/default.target"
 
 # Configure container networking via systemd one-shot service
-# (More reliable than systemd-networkd in cloud images)
-# With --network-bridge, nspawn creates a veth pair:
-#   host side: vb-<machine> bridged to iiab-br0
-#   container side: host0
 cat > "$MOUNT_DIR/etc/systemd/system/iiab-network-setup.service" << EOF
 [Unit]
 Description=Configure IIAB container network
@@ -318,7 +296,7 @@ WantedBy=multi-user.target
 EOF
 ln -sf /etc/systemd/system/iiab-network-setup.service "$MOUNT_DIR/etc/systemd/system/multi-user.target.wants/iiab-network-setup.service"
 
-# Write resolv.conf directly
+# Write resolv.conf
 rm -f "$MOUNT_DIR/etc/resolv.conf"
 cat > "$MOUNT_DIR/etc/resolv.conf" << EOF
 nameserver 8.8.8.8
@@ -345,10 +323,8 @@ EOF
 if $SKIP_INSTALL; then
     echo ""
     echo "=== Step 3: SKIPPED (--skip-install) ==="
-    # Still need basic container setup that the install step would have done
     systemd-firstboot --root="$MOUNT_DIR" --delete-root-password --force
 
-    # Quick boot test to generate SSH keys and lock root
     setup_bridge
     export MOUNT_DIR IIAB_BRIDGE IIAB_GW IIAB_IP=$IP
     expect << 'EXPECT_EOF'
@@ -366,11 +342,9 @@ else
     echo ""
     echo "=== Step 3: Running IIAB installer (this takes 30-60 minutes) ==="
 
-    # Network setup
     setup_bridge
     sysctl -w net.ipv4.ip_forward=1
 
-    # Set up NAT/masquerade and isolation rules
     EXT_IF=$(ip route | grep default | awk '{print $5}' | head -n1)
     if [ -n "$EXT_IF" ]; then
         setup_nftables_nat "$EXT_IF"
@@ -404,10 +378,7 @@ spawn systemd-nspawn -q --network-bridge=$env(IIAB_BRIDGE) --resolv-conf=off -D 
 
 expect "login: " { send "root\r" }
 expect -re {#\s?$} { send "export PAGER=cat SYSTEMD_PAGER=cat\r" }
-
-# Debian cloud image prep: generate SSH host keys (Ansible starts SSH later; needed on Debian)
 expect -re {#\s?$} { send "ssh-keygen -A\r" }
-
 expect -re {#\s?$} { send "/root/run_build.sh; echo \"BUILD_EXIT_CODE:\$?\"\r" }
 
 expect {
@@ -426,7 +397,6 @@ expect {
 }
 
 expect "login: " { send "root\r" }
-
 expect -re {#\s?$} { send "usermod --lock --expiredate=1 root\r" }
 expect -re {#\s?$} { send "shutdown now\r" }
 expect eof
@@ -437,17 +407,18 @@ EXPECT_EOF
 fi
 
 ###############################################################################
-# Step 4: Shrink the btrfs image
+# Step 4: Clean up and finalize
 ###############################################################################
 echo ""
-echo "=== Step 4: Shrinking btrfs image ==="
+echo "=== Step 4: Cleaning and finalizing ==="
 
-# Add metadata before cleanup
+# Add metadata
 {
     echo "$NAME"
     echo "Build date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
     echo "Branch: $IIAB_BRANCH"
     echo "Repo: $IIAB_REPO"
+    echo "Volatile: $VOLATILE"
 } >> "$MOUNT_DIR/.iiab-image"
 
 # Clean up
@@ -472,107 +443,41 @@ CLEANEOF
 
 systemd-firstboot --root="$MOUNT_DIR" --timezone=UTC --force
 
-# Zero-fill free space so btrfs balance can reclaim it
-echo "Zero-filling unused blocks..."
-(sh -c "cat /dev/zero > '$MOUNT_DIR/zero.fill'" 2>/dev/null || true)
-sync
-rm -f "$MOUNT_DIR/zero.fill"
+# Mark as read-only to signal build is complete and prevent accidental writes
+btrfs property set "$MOUNT_DIR" ro true
 
-# Unmount before shrinking
-echo "Unmounting..."
-umount "$MOUNT_DIR"
-rmdir "$MOUNT_DIR"
-sync
+# Measure final size
+USED_MB=$(du -sm "$MOUNT_DIR" | cut -f1)
+echo "Final image size: ${USED_MB}MB"
 
-# Re-mount to run btrfs operations
-mkdir -p "$MOUNT_DIR"
-mount -o loop "$WORK_BTRFS" "$MOUNT_DIR"
-
-# Balance to compact all data to the beginning of the filesystem
-echo "Balancing btrfs to compact data..."
-btrfs balance start -m -d -v "$MOUNT_DIR" 2>&1 | tail -1
-
-# Get actual used space and calculate target size
-USED_KB=$(btrfs filesystem usage --raw "$MOUNT_DIR" 2>/dev/null | \
-    awk '/Device size:/ {print $NF}' || \
-    btrfs filesystem df "$MOUNT_DIR" 2>/dev/null | awk '/Data/ {used+=$4} END {print used*1024}')
-# Fallback: just use du
-if [ -z "$USED_KB" ] || [ "$USED_KB" = "0" ]; then
-    USED_KB=$(du -sk "$MOUNT_DIR" | cut -f1)
-fi
-
-# Add 100MB buffer for btrfs metadata and safety
-BUFFER_KB=$((100 * 1024))
-TARGET_KB=$((USED_KB + BUFFER_KB))
-# Round up to nearest MiB
-TARGET_MB=$(( (TARGET_KB + 1023) / 1024 ))
-
-echo "Used: $(( USED_KB / 1024 ))MB, target: ${TARGET_MB}MB"
-
-# Shrink the filesystem
-btrfs filesystem resize "${TARGET_MB}M" "$MOUNT_DIR" >/dev/null 2>&1 || true
-
-# Unmount and truncate the backing file
-umount "$MOUNT_DIR"
-rmdir "$MOUNT_DIR"
-
-# Add small safety margin and align to 1 MiB
-NEW_SIZE=$(( (TARGET_MB + 10) * 1024 * 1024 ))
-ALIGN=$((1024 * 1024))
-NEW_SIZE=$(( ((NEW_SIZE + ALIGN - 1) / ALIGN) * ALIGN ))
-
-echo "Truncating image to $(( NEW_SIZE / 1024 / 1024 ))MB..."
-truncate -s "$NEW_SIZE" "$WORK_BTRFS"
-
-# Update config with actual image size (the --size value was a max, not the real usage)
-ACTUAL_SIZE_MB=$(( NEW_SIZE / 1024 / 1024 ))
+# Update config with actual size
 if [ -n "$CONFIG_PATH" ] && [ -f "$CONFIG_PATH" ]; then
-    sed -i "s/^IMAGE_SIZE_MB=.*/IMAGE_SIZE_MB=$ACTUAL_SIZE_MB/" "$CONFIG_PATH"
-    echo "Updated config IMAGE_SIZE_MB: $SIZE_MB -> $ACTUAL_SIZE_MB"
+    sed -i "s/^IMAGE_SIZE_MB=.*/IMAGE_SIZE_MB=$USED_MB/" "$CONFIG_PATH"
+    echo "Updated config IMAGE_SIZE_MB: $SIZE_MB -> $USED_MB"
 fi
 
-echo "Image shrunk successfully (${ACTUAL_SIZE_MB}MB)"
+# Prevent cleanup from deleting our successful build
+# (cleanup trap deletes the snapshot on failure)
 
 ###############################################################################
 # Step 5: Register the image
 ###############################################################################
 echo ""
-echo "=== Step 5: Registering container image ==="
+echo "=== Step 5: Registering container ==="
 
 mkdir -p /var/lib/machines
 
-if $RAM_IMAGE; then
-    # Keep image in RAM -- mount /run/iiab-ramfs if needed.
-    # The tmpfs holds all demos' images, so we cap it at ~90% of host RAM.
-    # Per-image capacity checks are handled by ramfs-setup.sh.
-    if ! mountpoint -q "/run/iiab-ramfs" 2>/dev/null; then
-        mkdir -p "/run/iiab-ramfs"
-        local_host_ram=$(( $(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo) * 90 / 100 ))
-        echo "Mounting tmpfs at /run/iiab-ramfs (${local_host_ram}MB)..."
-        mount -t tmpfs -o "size=${local_host_ram}M,mode=0755" tmpfs "/run/iiab-ramfs"
-    fi
+# Symlink so systemd-nspawn discovers it automatically
+# systemd-nspawn@.service uses RootImage= or -D with /var/lib/machines/<name>
+SYMLINK="/var/lib/machines/$NAME"
+rm -f "$SYMLINK"
+ln -sf "$MOUNT_DIR" "$SYMLINK"
 
-    # Move from build location to RAM image store
-    DEST="/run/iiab-ramfs/${NAME}.raw"
-    mv "$WORK_BTRFS" "$DEST"
-
-    # Symlink so systemd-nspawn can find it (systemd-dissect auto-detects btrfs)
-    ln -sf "$DEST" "/var/lib/machines/${NAME}.raw"
-    echo ""
-    echo "=========================================="
-    echo "Build complete (RAM image)!"
-    echo "Image: $DEST (symlinked to /var/lib/machines/${NAME}.raw)"
-    echo "=========================================="
-else
-    # Copy final image to persistent disk
-    DEST="/var/lib/machines/${NAME}.raw"
-    cp --reflink=auto "$WORK_BTRFS" "$DEST"
-    echo ""
-    echo "=========================================="
-    echo "Build complete!"
-    echo "Image: $DEST"
-    echo "=========================================="
-fi
-
-# Clean up build directory
-rm -rf "$BUILD_DIR"
+echo ""
+echo "=========================================="
+echo "Build complete: $NAME"
+echo "Subvolume: $MOUNT_DIR"
+echo "Symlink:   $SYMLINK → $MOUNT_DIR"
+echo "Size:      ${USED_MB}MB"
+echo "Volatile:  $VOLATILE"
+echo "=========================================="

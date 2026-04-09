@@ -21,8 +21,7 @@ DEMO_SUBNET="$IIAB_DEMO_SUBNET"
 SUBNET_BASE="$IIAB_SUBNET_BASE"
 
 # Resource allocation constants
-RAM_BUFFER=512    # Extra MB buffer per build (RAM or ram-image) for container runtime
-DISK_BASE=0       # No extra disk headroom; use requested size exactly
+DISK_BASE=100     # Extra MB headroom per build (btrfs metadata + buffer)
 
 ###############################################################################
 # Flock-based resource protection
@@ -127,9 +126,7 @@ EOF
 }
 
 load_resources() {
-    # Dynamically calculate allocations from active/pending demos
     DISK_ALLOCATED=0
-    RAM_ALLOCATED=0
 
     # Ensure state dirs exist before loading
     mkdir -p "$STATE_DIR" "$ACTIVE_DIR"
@@ -140,11 +137,7 @@ load_resources() {
             if [ -f "$demo_dir/config" ]; then
                 # shellcheck source=/dev/null
                 source "$demo_dir/config"
-                if [ "${RAM_IMAGE:-true}" = "true" ]; then
-                    RAM_ALLOCATED=$(( RAM_ALLOCATED + IMAGE_SIZE_MB ))
-                else
-                    DISK_ALLOCATED=$(( DISK_ALLOCATED + IMAGE_SIZE_MB ))
-                fi
+                DISK_ALLOCATED=$(( DISK_ALLOCATED + IMAGE_SIZE_MB ))
             fi
         done
     fi
@@ -155,15 +148,12 @@ load_resources() {
         source "$RESOURCE_FILE"
     else
         DISK_TOTAL=$(df -m /var/lib/machines 2>/dev/null | awk 'NR==2 {print $2}' || echo 50000)
-        RAM_TOTAL=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
     fi
 }
 
 save_resources() {
-    # Only save system totals, allocations are dynamic
     cat > "$RESOURCE_FILE" << EOF
 DISK_TOTAL=${DISK_TOTAL:-0}
-RAM_TOTAL=${RAM_TOTAL:-0}
 EOF
 }
 
@@ -251,46 +241,31 @@ _validate_script() {
 check_resources() {
     local name="$1"
     local size_mb="$2"
-    local ram_image="$3"
+    local build_on_disk="$3"
 
     load_resources
 
-    # All demos build in RAM (tmpfs) -- check available RAM for the build
-    local ram_avail=$(( RAM_TOTAL - RAM_ALLOCATED - RAM_BUFFER ))
-    local ram_needed=$(( size_mb + RAM_BUFFER ))
-    if [ "$ram_needed" -gt "$ram_avail" ]; then
-        echo "Error: Insufficient RAM to build demo '$name'." >&2
-        echo "  Need: ~${ram_needed}MB (demo: ${size_mb}MB + ${RAM_BUFFER}MB buffer)" >&2
-        echo "  Available: ${ram_avail}MB (${RAM_TOTAL}MB total - ${RAM_ALLOCATED}MB allocated)" >&2
-        echo "" >&2
-        echo "  Options:" >&2
-        echo "    Remove some demos: democtl remove <name>" >&2
-        echo "    Free all RAMFS: democtl ramfs cleanup" >&2
-        return 1
+    # All builds use storage.btrfs -- check available space
+    local storage_avail
+    if [ "$build_on_disk" = "true" ]; then
+        storage_avail=$(df -m /var 2>/dev/null | awk 'NR==2 {print $4}' || echo 0)
+    else
+        # /run is tmpfs - check available RAM
+        local avail_ram
+        avail_ram=$(awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo)
+        local already_allocated=0
+        if [ -f /run/iiab-demos/storage.btrfs ]; then
+            already_allocated=$(du -sm /run/iiab-demos/storage.btrfs 2>/dev/null | cut -f1 || echo 0)
+        fi
+        storage_avail=$(( avail_ram - already_allocated ))
     fi
 
-    # Non-ram-image demos also need persistent disk for the final image (after build)
-    if ! $ram_image; then
-        local disk_avail
-        disk_avail=$(df -m /var/lib/machines 2>/dev/null | awk 'NR==2 {print $4}' || echo 0)
-        local disk_needed=$(( size_mb + DISK_BASE ))
-        if [ "$disk_needed" -gt "$disk_avail" ]; then
-            echo "Error: Insufficient disk space for demo '$name' (final image)." >&2
-            echo "  Need: ~${disk_needed}MB (image: ${size_mb}MB + overhead)" >&2
-            echo "  Available: ${disk_avail}MB" >&2
-            return 1
-        fi
-    else
-        # RAM-image demos need a small amount of disk for the base image (shared, one-time)
-        local disk_avail
-        disk_avail=$(df -m /var/lib/machines 2>/dev/null | awk 'NR==2 {print $4}' || echo 0)
-        local base_disk_needed=$(( DISK_BASE + 500 ))
-        if [ "$base_disk_needed" -gt "$disk_avail" ]; then
-            echo "Error: Insufficient disk space for base image." >&2
-            echo "  Need: ~${base_disk_needed}MB" >&2
-            echo "  Available: ${disk_avail}MB" >&2
-            return 1
-        fi
+    local needed=$(( size_mb + DISK_BASE ))
+    if [ "$needed" -gt "$storage_avail" ]; then
+        echo "Error: Insufficient space to build demo '$name'." >&2
+        echo "  Need: ~${needed}MB (demo: ${size_mb}MB + ${DISK_BASE}MB buffer)" >&2
+        echo "  Available: ${storage_avail}MB" >&2
+        return 1
     fi
     return 0
 }
@@ -323,8 +298,8 @@ cmd_build() {
     # Defaults
     local name="" branch="master"
     local repo="https://github.com/iiab/iiab.git"
-    local size_mb=15000 volatile="overlay" ram_image=true
-    local local_vars="" wildcard=false description=""
+    local size_mb=15000 volatile="overlay"
+    local local_vars="" wildcard=false description="" base_name=""
     local foreground=false build_on_disk=false skip_install=false
     local start_after_build=false
 
@@ -336,11 +311,10 @@ cmd_build() {
             --repo)       repo="$2"; shift 2 ;;
             --size)       size_mb="$2"; shift 2 ;;
             --volatile)   volatile="$2"; shift 2 ;;
-            --disk-backed) ram_image=false; shift ;;
-            --ram-image)  ram_image=true; shift ;;  # keep as hidden/legacy alias
             --local-vars) local_vars="$2"; shift 2 ;;
             --wildcard)   wildcard=true; shift ;;
             --description) description="$2"; shift 2 ;;
+            --base)       base_name="$2"; shift 2 ;;
             --build-on-disk) build_on_disk=true; shift ;;
             --skip-install) skip_install=true; shift ;;
             --start)      start_after_build=true; shift ;;
@@ -406,7 +380,7 @@ cmd_build() {
     fi
 
     # Resource pre-flight (under lock)
-    if ! check_resources "$name" "$size_mb" "$ram_image"; then
+    if ! check_resources "$name" "$size_mb" "$build_on_disk"; then
         release_lock
         trap - EXIT
         return 1
@@ -421,19 +395,18 @@ cmd_build() {
     mkdir -p "$demo_dir"
 
     # Write config (under lock)
-    # Resources are now "allocated" just by this file existing.
     cat > "$demo_dir/config" << EOF
 DEMO_NAME="$name"
 IIAB_REPO="$repo"
 IIAB_BRANCH="$branch"
 IMAGE_SIZE_MB=$size_mb
 VOLATILE="$volatile"
-RAM_IMAGE=$ram_image
 BUILD_ON_DISK=$build_on_disk
 SKIP_INSTALL=$skip_install
 LOCAL_VARS="$local_vars"
 WILDCARD=$wildcard
 DESCRIPTION="$description"
+IIAB_BASE="$base_name"
 EOF
 
     echo "$ip" > "$demo_dir/ip"
@@ -542,7 +515,7 @@ build_demo() {
         return 1
     fi
     # shellcheck disable=SC2153  # Variables are set via source from config file
-    if ! check_resources "$name" "$IMAGE_SIZE_MB" "$RAM_IMAGE"; then
+    if ! check_resources "$name" "$IMAGE_SIZE_MB" "${BUILD_ON_DISK:-false}"; then
         log_demo "$name" "Resources no longer available, aborting build"
         release_lock
         echo "failed" > "$demo_dir/status"
@@ -561,10 +534,6 @@ build_demo() {
         "--config" "$demo_dir/config"
     )
 
-    if [ "$RAM_IMAGE" = "true" ]; then
-        build_args+=("--ram-image")
-    fi
-
     if [ "${BUILD_ON_DISK:-false}" = "true" ]; then
         build_args+=("--build-on-disk")
     fi
@@ -577,7 +546,11 @@ build_demo() {
         build_args+=("--local-vars" "$LOCAL_VARS")
     fi
 
-    log_demo "$name" "Building: branch=$IIAB_BRANCH volatile=$VOLATILE ram_image=$RAM_IMAGE"
+    if [ -n "${IIAB_BASE:-}" ]; then
+        build_args+=("--base" "$IIAB_BASE")
+    fi
+
+    log_demo "$name" "Building: branch=$IIAB_BRANCH volatile=$VOLATILE build_on_disk=${BUILD_ON_DISK:-false}"
     log_demo "$name" "This will take 30-60 minutes..."
 
     if ! bash "$build_script" "${build_args[@]}"; then
@@ -589,9 +562,6 @@ build_demo() {
     # Create .nspawn service files
     local service_script="${SCRIPT_DIR}/container-service.sh"
     local svc_args=("$name" "$ip" "--volatile=$VOLATILE")
-    if [ "$RAM_IMAGE" = "true" ]; then
-        svc_args+=("--ram-image")
-    fi
 
     if [ -x "$service_script" ]; then
         bash "$service_script" "${svc_args[@]}"
@@ -661,16 +631,19 @@ cmd_remove() {
         acquire_lock 0 || { exit_code=1; continue; }
         trap release_lock EXIT
 
-        # Remove from RAMFS if loaded
-        if [ -x "$SCRIPT_DIR/ramfs-setup.sh" ]; then
-            if ! bash "$SCRIPT_DIR/ramfs-setup.sh" unload "$name" 2>/dev/null; then
-                echo "Warning: Could not unload RAMFS image for '$name' (may not be loaded, continuing removal)"
-            fi
+        # Delete the btrfs subvolume if it exists
+        local storage_mount=""
+        if [ -f /run/iiab-demos/storage.btrfs ] && mountpoint -q /run/iiab-demos/storage 2>/dev/null; then
+            storage_mount="/run/iiab-demos/storage"
+        elif [ -f /var/iiab-demos/storage.btrfs ] && mountpoint -q /var/iiab-demos/storage 2>/dev/null; then
+            storage_mount="/var/iiab-demos/storage"
+        fi
+        if [ -n "$storage_mount" ]; then
+            btrfs subvolume delete "$storage_mount/builds/$name" >/dev/null 2>&1 || true
         fi
 
         # Remove image and symlinks
-        rm -f "/var/lib/machines/${name}.raw"
-        rm -f "/run/iiab-ramfs/${name}.raw"
+        rm -f "/var/lib/machines/$name"
 
         # Remove .nspawn config
         rm -f "/etc/systemd/nspawn/${name}.nspawn"
@@ -716,12 +689,11 @@ cmd_rebuild() {
         fi
 
         # Extract values before removal.
-        # Use printf %q to safely escape values (avoids eval injection from declare -p).
-        local IIAB_BRANCH IIAB_REPO IMAGE_SIZE_MB VOLATILE RAM_IMAGE BUILD_ON_DISK SKIP_INSTALL LOCAL_VARS WILDCARD DESCRIPTION
+        local IIAB_BRANCH IIAB_REPO IMAGE_SIZE_MB VOLATILE BUILD_ON_DISK SKIP_INSTALL LOCAL_VARS WILDCARD DESCRIPTION IIAB_BASE
         eval "$( (
             # shellcheck source=/dev/null
             source "$demo_dir/config"
-            for _rebuild_var in IIAB_BRANCH IIAB_REPO IMAGE_SIZE_MB VOLATILE RAM_IMAGE BUILD_ON_DISK SKIP_INSTALL LOCAL_VARS WILDCARD DESCRIPTION; do
+            for _rebuild_var in IIAB_BRANCH IIAB_REPO IMAGE_SIZE_MB VOLATILE BUILD_ON_DISK SKIP_INSTALL LOCAL_VARS WILDCARD DESCRIPTION IIAB_BASE; do
                 printf '%s=%q\n' "$_rebuild_var" "${!_rebuild_var:-}"
             done
         ) )"
@@ -734,12 +706,12 @@ cmd_rebuild() {
         [ -n "${IIAB_REPO:-}" ] && add_args+=("--repo" "$IIAB_REPO")
         [ -n "${IMAGE_SIZE_MB:-}" ] && add_args+=("--size" "$IMAGE_SIZE_MB")
         [ -n "${VOLATILE:-}" ] && add_args+=("--volatile" "$VOLATILE")
-        [ "${RAM_IMAGE:-true}" = "false" ] && add_args+=("--disk-backed")
         [ "${BUILD_ON_DISK:-false}" = "true" ] && add_args+=("--build-on-disk")
         [ "${SKIP_INSTALL:-false}" = "true" ] && add_args+=("--skip-install")
         [ -n "${LOCAL_VARS:-}" ] && add_args+=("--local-vars" "$LOCAL_VARS")
         [ "${WILDCARD:-false}" = "true" ] && add_args+=("--wildcard")
         [ -n "${DESCRIPTION:-}" ] && add_args+=("--description" "$DESCRIPTION")
+        [ -n "${IIAB_BASE:-}" ] && add_args+=("--base" "$IIAB_BASE")
 
         cmd_build "${add_args[@]}" || exit_code=1
     done
@@ -757,11 +729,11 @@ cmd_list() {
     load_resources
 
     printf "%-15s %-20s %-12s %-10s %-10s %s\n" \
-        "NAME" "SUBDOMAIN" "IP" "STATUS" "RAM/MB" "DESCRIPTION"
+        "NAME" "SUBDOMAIN" "IP" "STATUS" "SIZE/MB" "DESCRIPTION"
     printf "%-15s %-20s %-12s %-10s %-10s %s\n" \
-        "----" "---------" "--" "------" "------" "-----------"
+        "----" "---------" "--" "------" "-------" "-----------"
 
-    local total_ram_used=0
+    local total_disk_used=0
     for demo_dir in "$ACTIVE_DIR"/*/; do
         [ -d "$demo_dir" ] || continue
         local name
@@ -772,20 +744,17 @@ cmd_list() {
         ip=$(cat "$demo_dir/ip" 2>/dev/null || echo "?")
         local status
         status=$(cat "$demo_dir/status" 2>/dev/null || echo "unknown")
-        local ram_display="-"
-        if [ "$RAM_IMAGE" = "true" ]; then
-            ram_display="${IMAGE_SIZE_MB}M"
-            total_ram_used=$(( total_ram_used + IMAGE_SIZE_MB ))
-        fi
+        local size_display="${IMAGE_SIZE_MB}M"
+        total_disk_used=$(( total_disk_used + IMAGE_SIZE_MB ))
         local desc="${DESCRIPTION:--}"
         local list_subdomain
         list_subdomain=$(sanitize_subdomain "${SUBDOMAIN:-$name}")
         printf "%-15s %-20s %-12s %-10s %-10s %s\n" \
-            "$name" "${list_subdomain}.iiab.io" "$ip" "$status" "$ram_display" "$desc"
+            "$name" "${list_subdomain}.iiab.io" "$ip" "$status" "$size_display" "$desc"
     done
 
     echo ""
-    echo "Resources: ${RAM_ALLOCATED}MB/${RAM_TOTAL}MB RAM allocated, ${DISK_ALLOCATED}MB disk"
+    echo "Resources: ${DISK_ALLOCATED}MB allocated, ${DISK_TOTAL}MB total"
 }
 
 ###############################################################################
@@ -825,7 +794,6 @@ cmd_status() {
         echo "IP:         $ip"
         echo "Status:     $status"
         echo "Volatile:   $VOLATILE"
-        echo "RAM Image:  $RAM_IMAGE"
         echo "Size:       ${IMAGE_SIZE_MB}MB"
         if [ -n "$DESCRIPTION" ]; then
             echo "Description: $DESCRIPTION"
@@ -1079,7 +1047,6 @@ cmd_reconcile() {
 
     echo "Reconciled resource allocations from active demos."
     echo "  Disk allocated: ${DISK_ALLOCATED}MB"
-    echo "  RAM allocated:  ${RAM_ALLOCATED}MB"
 
     # Check for ghost IPs (IPs assigned but no running container)
     echo ""
@@ -1116,22 +1083,6 @@ cmd_reload() {
         bash "$SCRIPT_DIR/nginx-gen.sh"
     else
         echo "Error: nginx-gen.sh not found at $SCRIPT_DIR/nginx-gen.sh" >&2
-        return 1
-    fi
-}
-
-###############################################################################
-# democtl ramfs
-###############################################################################
-cmd_ramfs() {
-    ensure_root "$@"
-    local action="${1:?Usage: democtl ramfs <load|unload|status|cleanup> [name]}"
-    shift
-
-    if [ -x "$SCRIPT_DIR/ramfs-setup.sh" ]; then
-        bash "$SCRIPT_DIR/ramfs-setup.sh" "$action" "$@"
-    else
-        echo "Error: ramfs-setup.sh not found" >&2
         return 1
     fi
 }
@@ -1208,13 +1159,10 @@ cmd_start() {
             continue
         fi
 
-        # Ensure image symlink exists
-        if [ -f "/run/iiab-ramfs/${name}.raw" ]; then
-            ln -sf "/run/iiab-ramfs/${name}.raw" "/var/lib/machines/${name}.raw"
-        fi
-
-        if [ ! -f "/var/lib/machines/${name}.raw" ]; then
-            echo "Error: Image not found for demo '$name'" >&2
+        # Ensure rootfs symlink exists
+        if [ ! -e "/var/lib/machines/$name" ]; then
+            echo "Error: Rootfs not found for demo '$name'" >&2
+            echo "  Build it first: democtl build $name" >&2
             exit_code=1
             continue
         fi
@@ -1375,20 +1323,19 @@ Commands:
   start <name> [name ...]       Start stopped demo(s)
   restart <name> [name ...]     Restart running demo(s)
   reload                        Regenerate nginx config from active demos
-  ramfs <action> [name]         Manage RAM-loaded images (load/unload/status/cleanup)
   settle [timeout]              Wait until all demos reach a settled state (running/stopped/failed)
   reconcile                     Fix resource counter drift and check ghost IPs
 
 Build flags:
   --repo <url>              IIAB git repo (default: github.com/iiab/iiab.git)
   --branch <ref>            Git branch/tag/ref (default: master)
-  --size <MB>               Image size (default: 15000)
-  --disk-backed             Keep image on disk instead of RAM (default: no)
+  --size <MB>               Image capacity (default: 15000)
   --volatile <mode>         no | overlay | state | yes (default: overlay)
   --local-vars <path>       Path to local_vars.yml (host path or relative to cwd; falls back to IIAB repo)
   --wildcard                Use as wildcard for unknown subdomains
   --description <text>      Human-readable description
-  --build-on-disk           Build on disk instead of RAM (default: build in RAM)
+  --base <path|name>        Build on top of existing base subvolume
+  --build-on-disk           Store in /var/ instead of /run/ tmpfs (default: /run/)
   --start                   Start the demo after build completes (default: leave stopped)
   --fg                      Build in foreground (default: background)
 
@@ -1396,6 +1343,7 @@ Examples:
   democtl init
   democtl build small --local-vars vars/local_vars_small.yml --size 12000
   democtl build pr3612 --local-vars vars/local_vars_large.yml --branch refs/pull/3612/head --volatile yes
+  democtl build mydemo --base medium-base --start    # build on top of existing base
   democtl build mydemo --start    # build and immediately start
   democtl list
   democtl status small
@@ -1427,7 +1375,6 @@ main() {
         start)     cmd_start "$@" ;;
         restart)   cmd_restart "$@" ;;
         reload)    cmd_reload "$@" ;;
-        ramfs)     cmd_ramfs "$@" ;;
         settle)    cmd_settle "$@" ;;
         reconcile) cmd_reconcile "$@" ;;
         help|--help|-h) cmd_help ;;

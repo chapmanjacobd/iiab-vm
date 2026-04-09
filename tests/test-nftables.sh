@@ -207,7 +207,7 @@ add_container_isolation > /dev/null 2>&1
 set -e
 
 # Check that the inet iiab table and forward chain exist
-if nft list table inet iiab 2>/dev/null | grep -q "type filter hook forward priority -1"; then
+if nft list table inet iiab 2>/dev/null | grep -qE "type filter hook forward priority (filter - 1|-1)"; then
     assert_true "true" "Forward chain uses priority filter - 1"
 else
     assert_true "false" "Forward chain uses priority filter - 1"
