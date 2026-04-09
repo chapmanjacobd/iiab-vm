@@ -316,8 +316,9 @@ cmd_build() {
                 if [ -z "$name" ]; then
                     name="$1"; shift
                 else
-                    echo "Warning: Unknown argument: $1" >&2
-                    shift
+                    echo "Error: Unknown argument: $1" >&2
+                    echo "Usage: democtl build <name> [--branch <branch>] [--start] ..." >&2
+                    return 1
                 fi
                 ;;
         esac
@@ -715,6 +716,40 @@ cmd_delete() {
 
         # Remove demo state (under lock -- last step frees the IP slot)
         rm -rf "$demo_dir"
+
+        # Clean up orphaned Let's Encrypt certificate if no other demo uses it
+        local del_subdomain
+        del_subdomain=$(sanitize_subdomain "${SUBDOMAIN:-$name}")
+        local del_cert_path="/etc/letsencrypt/live/${del_subdomain}.iiab.io"
+        if [ -d "$del_cert_path" ]; then
+            # Check if any remaining demo uses the same subdomain
+            local cert_in_use=false
+            for other_dir in "$ACTIVE_DIR"/*/; do
+                [ -d "$other_dir" ] || continue
+                local other_name
+                other_name=$(basename "$other_dir")
+                [ "$other_name" = "$name" ] && continue
+                if [ -f "$other_dir/config" ]; then
+                    local other_subdomain
+                    # shellcheck source=/dev/null
+                    other_subdomain=$( ( source "$other_dir/config"; printf '%s' "${SUBDOMAIN:-$other_name}" ) )
+                    other_subdomain=$(sanitize_subdomain "$other_subdomain")
+                    if [ "$other_subdomain" = "$del_subdomain" ]; then
+                        cert_in_use=true
+                        break
+                    fi
+                fi
+            done
+            if ! $cert_in_use; then
+                echo "  Cleaning up orphaned certificate: ${del_subdomain}.iiab.io"
+                if command -v certbot >/dev/null 2>&1; then
+                    certbot delete --cert-name "${del_subdomain}.iiab.io" --non-interactive >/dev/null 2>&1 || \
+                        rm -rf "$del_cert_path"
+                else
+                    rm -rf "$del_cert_path"
+                fi
+            fi
+        fi
 
         # Release lock
         release_lock

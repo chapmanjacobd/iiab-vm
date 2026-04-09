@@ -94,7 +94,9 @@ for domain in "${DOMAINS[@]}"; do
                     CERT_SKIPPED=$((CERT_SKIPPED + 1))
                     continue
                 else
-                    echo "Certificate for $domain expires in ${days_left} days -- will renew"
+                    echo "Certificate for $domain expires in ${days_left} days -- certbot.timer will handle renewal"
+                    CERT_SKIPPED=$((CERT_SKIPPED + 1))
+                    continue
                 fi
             fi
         else

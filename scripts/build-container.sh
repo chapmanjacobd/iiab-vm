@@ -132,10 +132,9 @@ grow_storage_file() {
 
     # Grow if needed
     if [ "$target_gb" -gt "$current_size_gb" ]; then
-        # Safeguard: check if any containers are using this storage before unmounting
-        local active_containers=0
+        # Hard safeguard: refuse to grow if any containers are using this storage
         if mountpoint -q "$STORAGE_ROOT" 2>/dev/null; then
-            # Check if any systemd-nspawn containers are using subvolumes from this storage
+            local active_containers=0
             for machine in $(machinectl list --no-legend 2>/dev/null | awk '{print $1}' || true); do
                 local root_path
                 root_path=$(machinectl show "$machine" -p RootDirectory --value 2>/dev/null || echo "")
@@ -145,10 +144,10 @@ grow_storage_file() {
             done
 
             if [ "$active_containers" -gt 0 ]; then
-                echo "WARNING: $active_containers container(s) actively using storage -- cannot grow during runtime" >&2
+                echo "ERROR: $active_containers container(s) actively using storage -- cannot resize" >&2
                 echo "  Current storage.btrfs size: ${current_size_gb}G, needed: ${target_gb}G" >&2
-                echo "  Stop containers first, then rebuild to resize storage" >&2
-                return 1
+                echo "  Stop all containers using this storage first, then rebuild to resize." >&2
+                exit 1
             fi
         fi
 
@@ -240,7 +239,6 @@ fi
 
 # Copy a subvolume from the alternate storage.btrfs if it doesn't exist locally.
 # Used when chaining builds across storage backends (RAM ↔ disk).
-# Falls back from btrfs send/receive to cp -a --reflink=auto.
 copy_subvolume_from_alternate() {
     local subvol_name="$1"
     local alt_storage="$2"  # path to alternate storage.btrfs

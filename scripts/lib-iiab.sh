@@ -233,6 +233,8 @@ add_container_isolation() {
 # Check if isolation rules are already correctly applied (internal helper)
 _isolation_rules_active() {
     local ext_if="${1:-}"
+    local subnet="${IIAB_DEMO_SUBNET}"
+    local host_ip="${IIAB_GW}"
 
     # Check inet iiab table exists
     if ! nft list table inet iiab >/dev/null 2>&1; then
@@ -257,19 +259,45 @@ _isolation_rules_active() {
     # Check bridge forward chain has drop rules for container interfaces
     local bridge_rules
     bridge_rules=$(nft list chain bridge iiab forward 2>/dev/null || echo "")
-    if ! echo "$bridge_rules" | grep -q "drop"; then
+    if ! echo "$bridge_rules" | grep -q 'iifname "ve-\*" oifname "ve-\*" drop'; then
+        return 1
+    fi
+    if ! echo "$bridge_rules" | grep -q 'iifname "vb-\*" oifname "vb-\*" drop'; then
         return 1
     fi
 
-    # Check inet forward has accept rules
+    # Check inet forward chain has all expected rules
     local inet_forward
     inet_forward=$(nft list chain inet iiab forward 2>/dev/null || echo "")
-    if ! echo "$inet_forward" | grep -q "accept"; then
+
+    # A. Established/related
+    if ! echo "$inet_forward" | grep -q "ct state established,related accept"; then
         return 1
     fi
 
-    # Check established/related rule exists
-    if ! echo "$inet_forward" | grep -q "ct state established,related accept"; then
+    # B. Container -> Host gateway
+    if ! echo "$inet_forward" | grep -qF "iifname { ve-*, vb-* }" || \
+       ! echo "$inet_forward" | grep -qF "ip daddr $host_ip"; then
+        return 1
+    fi
+
+    # C. Container -> Internet (only if ext_if is set)
+    if [ -n "$ext_if" ]; then
+        if ! echo "$inet_forward" | grep -qF "oifname $ext_if"; then
+            return 1
+        fi
+    fi
+
+    # D. Host -> container
+    if ! echo "$inet_forward" | grep -qF "oifname { ve-*, vb-* }" || \
+       ! echo "$inet_forward" | grep -qF "ip daddr $subnet"; then
+        return 1
+    fi
+
+    # Check inet input rules
+    local inet_input
+    inet_input=$(nft list chain inet iiab input 2>/dev/null || echo "")
+    if ! echo "$inet_input" | grep -qF 'iifname { ve-*, vb-* } accept'; then
         return 1
     fi
 
