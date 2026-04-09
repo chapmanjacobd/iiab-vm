@@ -110,7 +110,7 @@ ensure_storage() {
             # RAM storage: sparse file in tmpfs (only allocates as written)
             truncate -s 50G "$STORAGE_BTRFS"
         fi
-        mkfs.btrfs -f -L iiab-demos "$STORAGE_BTRFS" >/dev/null 2>&1
+        mkfs.btrfs -f -L iiab-demos "$STORAGE_BTRFS"
     fi
 
     mount -o loop,compress-force=zstd:1 "$STORAGE_BTRFS" "$STORAGE_ROOT"
@@ -120,8 +120,8 @@ ensure_storage() {
 # Cleanup on exit or failure
 cleanup() {
     # Remove build snapshot if build didn't complete
-    if btrfs subvolume show "$BUILDS_DIR/$NAME" >/dev/null 2>&1; then
-        btrfs subvolume delete "$BUILDS_DIR/$NAME" >/dev/null 2>&1 || true
+    if btrfs subvolume show "$BUILDS_DIR/$NAME" >/dev/null; then
+        btrfs subvolume delete "$BUILDS_DIR/$NAME" >/dev/null || true
     fi
     # Unmount storage if we mounted it
     if [ "${DID_MOUNT:-false}" = "true" ] && mountpoint -q "$STORAGE_ROOT" 2>/dev/null; then
@@ -171,12 +171,12 @@ echo "=== Step 1: Preparing base ==="
 
 # Prepare the Debian base subvolume if needed
 if [ -z "$BASE_NAME" ]; then
-    if ! btrfs subvolume show "$STORAGE_ROOT/base-debian" >/dev/null 2>&1; then
+    if ! btrfs subvolume show "$STORAGE_ROOT/base-debian" >/dev/null; then
         # Download and extract Debian into a temp dir, then copy into subvolume
         tmpdir=$(mktemp -d "$DEMO_BASE_DIR/debian-base.XXXXXX")
         tar_url="https://cloud.debian.org/images/cloud/trixie/latest/debian-13-nocloud-amd64.tar.xz"
         echo "Downloading and extracting Debian 13 nocloud rootfs..."
-        curl -fL "$tar_url" | tar -xJ -C "$tmpdir" 2>/dev/null || {
+        curl -fL "$tar_url" | tar -xJ -C "$tmpdir" || {
             echo "Error: Failed to download/extract Debian rootfs" >&2
             rm -rf "$tmpdir"
             exit 1
@@ -194,7 +194,7 @@ if [ -z "$BASE_NAME" ]; then
         echo "Base subvolume already exists: $STORAGE_ROOT/base-debian"
     fi
 else
-    if ! btrfs subvolume show "$BASE_MOUNT/$BASE_SUBVOL" >/dev/null 2>&1; then
+    if ! btrfs subvolume show "$BASE_MOUNT/$BASE_SUBVOL" >/dev/null; then
         echo "Error: Base subvolume not found: $BASE_SUBVOL" >&2
         exit 1
     fi
@@ -203,7 +203,7 @@ fi
 # Create CoW snapshot for this build
 BUILD_SUBVOL="$BUILDS_DIR/$NAME"
 echo "Creating CoW snapshot of $BASE_SUBVOL..."
-btrfs subvolume snapshot "$BASE_MOUNT/$BASE_SUBVOL" "$BUILD_SUBVOL" >/dev/null
+btrfs subvolume snapshot "$BASE_MOUNT/$BASE_SUBVOL" "$BUILD_SUBVOL"
 echo "Build rootfs: $BUILD_SUBVOL ($(du -sh "$BUILD_SUBVOL" | cut -f1))"
 
 ###############################################################################
@@ -276,6 +276,7 @@ fi
 echo "$NAME" > "$BUILD_SUBVOL/etc/hostname"
 
 # Set default target to multi-user
+mkdir -p "$BUILD_SUBVOL/etc/systemd/system"
 ln -sf /usr/lib/systemd/system/multi-user.target "$BUILD_SUBVOL/etc/systemd/system/default.target"
 
 # Configure container networking via systemd one-shot service
@@ -295,6 +296,7 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 EOF
+mkdir -p "$BUILD_SUBVOL/etc/systemd/system/multi-user.target.wants"
 ln -sf /etc/systemd/system/iiab-network-setup.service "$BUILD_SUBVOL/etc/systemd/system/multi-user.target.wants/iiab-network-setup.service"
 
 # Write resolv.conf
