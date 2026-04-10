@@ -30,7 +30,7 @@ ensure_root() {
         # Use saved script path and original args to preserve correct execution.
         # _DEMOCTL_SCRIPT and _DEMOCTL_ORIG_ARGS are set by democtl at startup
         # to survive function-level shifts that would otherwise lose $@.
-        if [ -n "${_DEMOCTL_SCRIPT:-}" ] && [ "${#_DEMOCTL_ORIG_ARGS[@]:-0}" -gt 0 ]; then
+        if [ -n "${_DEMOCTL_SCRIPT:-}" ] && [ "${#_DEMOCTL_ORIG_ARGS[@]}" -gt 0 ]; then
             exec sudo "$_DEMOCTL_SCRIPT" "${_DEMOCTL_ORIG_ARGS[@]}"
         else
             # Fallback: use $0 and $@ directly (works when called from main scope)

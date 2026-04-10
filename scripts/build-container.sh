@@ -527,10 +527,28 @@ echo "$NAME" > "$BUILD_SUBVOL/etc/hostname"
 mkdir -p "$BUILD_SUBVOL/etc/systemd/system"
 ln -sf /usr/lib/systemd/system/multi-user.target "$BUILD_SUBVOL/etc/systemd/system/default.target"
 
-# Configure container networking via systemd one-shot service
+# Configure container networking via systemd-networkd (priority 99 > built-in 80-container-host0.network)
+# The built-in 80-container-host0.network tries DHCP on host0 which fails silently and
+# falls back to link-local 169.254.x.x. Our higher-priority file wins and sets a static config.
+mkdir -p "$BUILD_SUBVOL/etc/systemd/network"
+cat > "$BUILD_SUBVOL/etc/systemd/network/99-iiab-host0.network" << EOF
+[Match]
+Kind=veth
+Name=host0
+
+[Network]
+Address=$IP/24
+Gateway=$IIAB_GW
+DHCP=no
+DNS=8.8.8.8
+DNS=1.1.1.1
+EOF
+
+# Also write a one-shot service as fallback for early-boot (before networkd finishes)
 cat > "$BUILD_SUBVOL/etc/systemd/system/iiab-network-setup.service" << EOF
 [Unit]
-Description=Configure IIAB container network
+Description=Configure IIAB container network (fallback)
+After=systemd-networkd.service
 Before=network-online.target
 Wants=network-online.target
 
@@ -610,10 +628,23 @@ else
 #!/bin/bash
 set -euo pipefail
 
+# Wait for network to be fully configured (networkd may still be initializing)
+for i in $(seq 1 30); do
+    if ip route | grep -q default; then
+        break
+    fi
+    sleep 1
+done
+
 echo "=== Network state ==="
 ip addr show 2>&1 || true
 ip route show 2>&1 || true
 cat /etc/resolv.conf 2>&1 || true
+
+if ! ip route | grep -q default; then
+    echo "ERROR: No default route configured -- network is not functional" >&2
+    exit 1
+fi
 
 apt update
 DEBIAN_FRONTEND=noninteractive apt upgrade -y
