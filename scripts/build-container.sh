@@ -31,6 +31,7 @@ BUILD_ON_DISK=false
 SKIP_INSTALL=false
 CONFIG_PATH=""
 BASE_NAME=""
+CLEANUP_FAILED=false
 
 # Btrfs storage sizing
 INITIAL_SIZE_GB=20    # Start with 20GB, grow on demand
@@ -45,10 +46,12 @@ while [[ $# -gt 0 ]]; do
         --volatile)   VOLATILE_MODE="$2"; shift 2 ;;
         --ip)         IP="$2"; shift 2 ;;
         --local-vars) LOCAL_VARS="$2"; shift 2 ;;
-        --build-on-disk) BUILD_ON_DISK=true; shift ;;
+        --disk)       BUILD_ON_DISK=true; shift ;;
+        --build-on-disk) BUILD_ON_DISK=true; shift ;;  # legacy alias
         --skip-install) SKIP_INSTALL=true; shift ;;
         --config)     CONFIG_PATH="$2"; shift 2 ;;
         --base)       BASE_NAME="$2"; shift 2 ;;
+        --cleanup)    CLEANUP_FAILED=true; shift ;;
         *)
             echo "Warning: Unknown option: $1" >&2
             shift
@@ -191,9 +194,23 @@ ensure_storage() {
 
 # Cleanup on exit or failure
 cleanup() {
-    # Remove build snapshot only if build failed
+    # Remove build snapshot only if build failed (unless --cleanup)
     if [ "${BUILD_SUCCESS:-false}" = "true" ]; then
         return 0
+    fi
+    if [ "${CLEANUP_FAILED:-false}" = "true" ]; then
+        # --cleanup: delete the failed build snapshot
+        if btrfs subvolume show "$BUILDS_DIR/$NAME" >/dev/null 2>&1; then
+            echo "Cleanup: removing failed build snapshot $NAME (--cleanup)"
+            btrfs subvolume delete --commit-each "$BUILDS_DIR/$NAME" >/dev/null 2>&1 || true
+        fi
+    else
+        # Default: preserve failed snapshots for inspection
+        echo ""
+        echo "=== Build failed, preserving snapshot for inspection ==="
+        echo "  Snapshot: $BUILDS_DIR/$NAME"
+        echo "  To inspect: systemd-nspawn -q -D $BUILDS_DIR/$NAME --boot"
+        echo "  To clean up: democtl cleanup --all  or  btrfs subvolume delete $BUILDS_DIR/$NAME"
     fi
     # Terminate any lingering nspawn container and clean up veth
     if [ -n "${NAME:-}" ]; then

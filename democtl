@@ -392,7 +392,7 @@ cmd_build() {
     local size_mb=15000 volatile="overlay"
     local local_vars="" wildcard=false description="" base_name=""
     local foreground=false build_on_disk=false skip_install=false
-    local start_after_build=false
+    local start_after_build=false cleanup_failed=false
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -405,8 +405,10 @@ cmd_build() {
             --wildcard)   wildcard=true; shift ;;
             --description) description="$2"; shift 2 ;;
             --base)       base_name="$2"; shift 2 ;;
-            --build-on-disk) build_on_disk=true; shift ;;
+            --disk)       build_on_disk=true; shift ;;
+            --build-on-disk) build_on_disk=true; shift ;;  # legacy alias
             --skip-install) skip_install=true; shift ;;
+            --cleanup)    cleanup_failed=true; shift ;;
             --start)      start_after_build=true; shift ;;
             --fg)         foreground=true; shift ;;
             *)
@@ -574,6 +576,7 @@ IMAGE_SIZE_MB=$size_mb
 VOLATILE="$volatile"
 BUILD_ON_DISK=$build_on_disk
 SKIP_INSTALL=$skip_install
+CLEANUP_FAILED=$cleanup_failed
 LOCAL_VARS="$local_vars"
 WILDCARD=$wildcard
 DESCRIPTION="$description"
@@ -715,6 +718,10 @@ build_demo() {
 
     if [ "${SKIP_INSTALL:-false}" = "true" ]; then
         build_args+=("--skip-install")
+    fi
+
+    if [ "${CLEANUP_FAILED:-false}" = "true" ]; then
+        build_args+=("--cleanup")
     fi
 
     if [ -n "$LOCAL_VARS" ]; then
@@ -1730,6 +1737,99 @@ cmd_restart() {
 }
 
 ###############################################################################
+# democtl cleanup
+###############################################################################
+cmd_cleanup() {
+    ensure_root "$@"
+
+    local dry_run=false
+    local all=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --dry-run|-n) dry_run=true; shift ;;
+            --all) all=true; shift ;;
+            --help|-h)
+                echo "Usage: democtl cleanup [--dry-run] [--all]"
+                echo ""
+                echo "Find and clean up failed builds that were preserved (--keep-failed)."
+                echo ""
+                echo "Options:"
+                echo "  --dry-run   Show what would be cleaned up without deleting"
+                echo "  --all       Also clean btrfs subvolumes for failed builds"
+                return 0
+                ;;
+            *)
+                echo "Error: Unknown option: $1" >&2
+                echo "Usage: democtl cleanup [--dry-run] [--all]" >&2
+                return 1
+                ;;
+        esac
+    done
+
+    local found_any=false
+    local cleaned=0
+
+    # 1. Check for demos with status=failed
+    if [ -d "$ACTIVE_DIR" ]; then
+        for demo_dir in "$ACTIVE_DIR"/*/; do
+            [ -d "$demo_dir" ] || continue
+            local name
+            name=$(basename "$demo_dir")
+            local status
+            status=$(cat "$demo_dir/status" 2>/dev/null || echo "unknown")
+
+            if [ "$status" = "failed" ]; then
+                found_any=true
+                if $dry_run; then
+                    echo "[dry-run] Would clean up failed demo: $name"
+                else
+                    echo "Cleaning up failed demo: $name"
+                    cleanup_failed_build "$name"
+                    cleaned=$((cleaned + 1))
+                fi
+            fi
+        done
+    fi
+
+    # 2. Check for orphaned btrfs subvolumes (from --keep-failed builds)
+    local builds_dirs=("/run/iiab-demos/storage/builds" "/var/iiab-demos/storage/builds")
+    for bdir in "${builds_dirs[@]}"; do
+        if [ -d "$bdir" ]; then
+            for subvol in "$bdir"/*/; do
+                [ -d "$subvol" ] || continue
+                local name
+                name=$(basename "$subvol")
+
+                # Skip if this subvolume has a corresponding active demo
+                if [ -d "$ACTIVE_DIR/$name" ]; then
+                    continue
+                fi
+
+                found_any=true
+                if $dry_run; then
+                    echo "[dry-run] Would remove orphaned subvolume: $subvol"
+                else
+                    if $all; then
+                        echo "Removing orphaned subvolume: $subvol"
+                        btrfs subvolume delete --commit-each "$subvol" >/dev/null 2>&1 || true
+                        cleaned=$((cleaned + 1))
+                    else
+                        echo "Orphaned subvolume: $subvol (use --all to remove)"
+                    fi
+                fi
+            done
+        fi
+    done
+
+    if ! $found_any; then
+        echo "Nothing to clean up."
+    elif ! $dry_run; then
+        echo "Cleaned up $cleaned items."
+    fi
+}
+
+###############################################################################
 # democtl help
 ###############################################################################
 cmd_help() {
@@ -1754,6 +1854,7 @@ Commands:
   reload                        Regenerate nginx config from active demos
   settle [timeout]              Wait until all demos reach a settled state (running/stopped/failed)
   reconcile                     Fix resource counter drift and check ghost IPs
+  cleanup [--dry-run] [--all]   Clean up failed builds and orphaned subvolumes
 
 Build flags:
   --repo <url>              IIAB git repo (default: github.com/iiab/iiab.git)
@@ -1764,9 +1865,10 @@ Build flags:
   --wildcard                Use as wildcard for unknown subdomains
   --description <text>      Human-readable description
   --base <path|name>        Build on top of existing base subvolume
-  --build-on-disk           Store in /var/ instead of /run/ tmpfs (default: /run/)
+  --disk                    Store in /var/ instead of /run/ tmpfs (default: /run/)
   --start                   Start the demo after build completes (default: leave stopped)
   --fg                      Build in foreground (default: background)
+  --cleanup                 Delete failed build snapshots on failure (default: preserve for inspection)
 
 Examples:
   democtl init
@@ -1806,6 +1908,7 @@ main() {
         reload)    cmd_reload "$@" ;;
         settle)    cmd_settle "$@" ;;
         reconcile) cmd_reconcile "$@" ;;
+        cleanup)   cmd_cleanup "$@" ;;
         help|--help|-h) cmd_help ;;
         *)
             echo "Error: Unknown command: $cmd" >&2
