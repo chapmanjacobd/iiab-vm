@@ -735,17 +735,21 @@ expect {
     }
     -re "BUILD_EXIT_CODE:(\[0-9\]+)" {
         set exit_code $expect_out(1,string)
-        if { $exit_code != 0 } {
-            puts "\nIIAB build script failed with exit code: $exit_code"
-            exit 1
+        if {$build_type eq "incremental"} {
+            if { $exit_code != 0 } {
+                puts "\nIIAB build script failed with exit code: $exit_code"
+                exit 1
+            }
+            puts "\nIIAB build script completed successfully with exit code: $exit_code"
         }
-        # For fresh installs, we ignore BUILD_EXIT_CODE and rely on "photographed"
+        exp_continue
     }
     -re {#\s?$} {
-        if {![info exists exit_code]} {
+        if {$build_type eq "incremental" && ![info exists exit_code]} {
             puts "\nError: Prompt detected before BUILD_EXIT_CODE -- build script likely crashed"
             exit 1
         }
+        # Prompt seen, exit block for both cases
     }
 }
 
@@ -765,9 +769,12 @@ if {[info exists build_type] && $build_type eq "incremental"} {
     }
 }
 
-expect {
-    "login: " { send "root\r"; exp_continue }
-    -re {#\s?$}
+# Handle post-validation: fresh install rebooted, wait for login; incremental already at prompt
+if {[info exists build_type] && $build_type eq "fresh"} {
+    expect {
+        "login: " { send "root\r" }
+        timeout { puts "\nTimed out waiting for reboot login"; exit 1 }
+    }
 }
 expect -re {#\s?$} { send "usermod --lock --expiredate=1 root\r" }
 expect -re {#\s?$} { send "shutdown now\r" }
