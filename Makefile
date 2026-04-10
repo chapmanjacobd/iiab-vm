@@ -64,31 +64,6 @@ status:
 		done; \
 	fi
 
-# Stop all running demos
-stop:
-	$(require-root)
-	@for dir in /var/lib/iiab-demos/active/*/; do \
-		[ -d "$$dir" ] || continue; \
-		name=$$(basename "$$dir"); \
-		echo "Stopping $$name..."; \
-		bash democtl stop "$$name" 2>/dev/null || true; \
-	done
-
-# Start all built demos
-start:
-	$(require-root)
-	@for dir in /var/lib/iiab-demos/active/*/; do \
-		[ -d "$$dir" ] || continue; \
-		name=$$(basename "$$dir"); \
-		echo "Starting $$name..."; \
-		bash democtl start "$$name"; \
-	done
-
-# Restart all running demos
-restart:
-	$(require-root)
-	@$(MAKE) stop
-	@$(MAKE) start
 
 # Show logs for all demos (pass NAME= to filter)
 logs:
@@ -103,14 +78,3 @@ logs:
 			bash democtl logs "$$name"; \
 		done; \
 	fi
-
-# Full cleanup
-delete:
-	$(require-root)
-	@for dir in /var/lib/iiab-demos/active/*/; do \
-		[ -d "$$dir" ] || continue; \
-		name=$$(basename "$$dir"); \
-		echo "Deleting $$name..."; \
-		bash democtl delete "$$name" 2>/dev/null || true; \
-	done
-	@echo "All demos removed."

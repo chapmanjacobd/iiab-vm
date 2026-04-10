@@ -766,14 +766,32 @@ build_demo() {
 ###############################################################################
 cmd_delete() {
     ensure_root "$@"
-    if [ $# -eq 0 ]; then
+
+    local delete_all=false
+    local names=()
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --all) delete_all=true; shift ;;
+            *) names+=("$1"); shift ;;
+        esac
+    done
+
+    if $delete_all; then
+        for demo_dir in "$ACTIVE_DIR"/*/; do
+            [ -d "$demo_dir" ] || continue
+            names+=("$(basename "$demo_dir")")
+        done
+    fi
+
+    if [ ${#names[@]} -eq 0 ]; then
         echo "Error: at least one demo name required" >&2
-        echo "Usage: democtl delete <name> [name ...]" >&2
+        echo "Usage: democtl delete <name> [name ...] [--all]" >&2
         return 1
     fi
 
     local exit_code=0
-    for name in "$@"; do
+    for name in "${names[@]}"; do
         local demo_dir="$ACTIVE_DIR/$name"
         if [ ! -d "$demo_dir" ]; then
             echo "Error: demo '$name' not found" >&2
@@ -1496,9 +1514,27 @@ cmd_reload() {
 ###############################################################################
 cmd_stop() {
     ensure_root "$@"
-    if [ $# -eq 0 ]; then
+
+    local stop_all=false
+    local names=()
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --all) stop_all=true; shift ;;
+            *) names+=("$1"); shift ;;
+        esac
+    done
+
+    if $stop_all; then
+        for demo_dir in "$ACTIVE_DIR"/*/; do
+            [ -d "$demo_dir" ] || continue
+            names+=("$(basename "$demo_dir")")
+        done
+    fi
+
+    if [ ${#names[@]} -eq 0 ]; then
         echo "Error: at least one demo name required" >&2
-        echo "Usage: democtl stop <name> [name ...]" >&2
+        echo "Usage: democtl stop <name> [name ...] [--all]" >&2
         return 1
     fi
 
@@ -1506,12 +1542,11 @@ cmd_stop() {
     acquire_lock 0 || return 1
 
     local exit_code=0
-    for name in "$@"; do
+    for name in "${names[@]}"; do
         local demo_dir="$ACTIVE_DIR/$name"
         if [ ! -d "$demo_dir" ]; then
             echo "Error: demo '$name' not found" >&2
             exit_code=1
-            # Continue processing other demos even on error
             continue
         fi
 
@@ -1536,7 +1571,7 @@ cmd_stop() {
                 continue
                 ;;
             *)
-                echo "Error: demo '$name' has unknown status '$status'." >&2
+                echo "Error: demo '$name' has unknown status." >&2
                 exit_code=1
                 continue
                 ;;
@@ -1607,9 +1642,27 @@ _wait_for_running() {
 ###############################################################################
 cmd_start() {
     ensure_root "$@"
-    if [ $# -eq 0 ]; then
+
+    local start_all=false
+    local names=()
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --all) start_all=true; shift ;;
+            *) names+=("$1"); shift ;;
+        esac
+    done
+
+    if $start_all; then
+        for demo_dir in "$ACTIVE_DIR"/*/; do
+            [ -d "$demo_dir" ] || continue
+            names+=("$(basename "$demo_dir")")
+        done
+    fi
+
+    if [ ${#names[@]} -eq 0 ]; then
         echo "Error: at least one demo name required" >&2
-        echo "Usage: democtl start <name> [name ...]" >&2
+        echo "Usage: democtl start <name> [name ...] [--all]" >&2
         return 1
     fi
 
@@ -1617,7 +1670,7 @@ cmd_start() {
     acquire_lock 0 || return 1
 
     local exit_code=0
-    for name in "$@"; do
+    for name in "${names[@]}"; do
         local demo_dir="$ACTIVE_DIR/$name"
         if [ ! -d "$demo_dir" ]; then
             echo "Error: demo '$name' not found" >&2
@@ -1682,9 +1735,27 @@ cmd_start() {
 ###############################################################################
 cmd_restart() {
     ensure_root "$@"
-    if [ $# -eq 0 ]; then
+
+    local restart_all=false
+    local names=()
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --all) restart_all=true; shift ;;
+            *) names+=("$1"); shift ;;
+        esac
+    done
+
+    if $restart_all; then
+        for demo_dir in "$ACTIVE_DIR"/*/; do
+            [ -d "$demo_dir" ] || continue
+            names+=("$(basename "$demo_dir")")
+        done
+    fi
+
+    if [ ${#names[@]} -eq 0 ]; then
         echo "Error: at least one demo name required" >&2
-        echo "Usage: democtl restart <name> [name ...]" >&2
+        echo "Usage: democtl restart <name> [name ...] [--all]" >&2
         return 1
     fi
 
@@ -1692,7 +1763,7 @@ cmd_restart() {
     acquire_lock 0 || return 1
 
     local exit_code=0
-    for name in "$@"; do
+    for name in "${names[@]}"; do
         local demo_dir="$ACTIVE_DIR/$name"
         if [ ! -d "$demo_dir" ]; then
             echo "Error: demo '$name' not found" >&2
@@ -1841,16 +1912,16 @@ Usage: democtl <command> [args]
 Commands:
   init                          Bootstrap host (install packages, network, nginx)
   build <name> [flags]          Build a demo (leaves it stopped; use --start to bring online)
-  delete <name> [name ...]      Stop and delete demo(s)
+  delete <name> [name ...] [--all]  Stop and delete demo(s)
   rebuild <name> [name ...]     Delete and re-build demo(s)
   rebuild --all                 Rebuild ALL demos from scratch (fresh storage + Debian base)
   list                          Show all demos
   status <name> [name ...]      Detailed status for demo(s)
   logs <name> [name ...]        Show build log or container journal for demo(s)
   shell <name>                  Open shell in container
-  stop <name> [name ...]        Stop running demo(s)
-  start <name> [name ...]       Start stopped demo(s)
-  restart <name> [name ...]     Restart running demo(s)
+  stop <name> [name ...] [--all]    Stop running demo(s)
+  start <name> [name ...] [--all]   Start stopped demo(s)
+  restart <name> [name ...] [--all] Restart running demo(s)
   reload                        Regenerate nginx config from active demos
   settle [timeout]              Wait until all demos reach a settled state (running/stopped/failed)
   reconcile                     Fix resource counter drift and check ghost IPs
