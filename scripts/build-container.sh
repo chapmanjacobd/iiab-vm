@@ -648,9 +648,26 @@ fi
 
 apt update
 DEBIAN_FRONTEND=noninteractive apt upgrade -y
-curl -fLo /usr/sbin/iiab https://raw.githubusercontent.com/iiab/iiab-factory/master/iiab
-chmod 0755 /usr/sbin/iiab
-/usr/sbin/iiab --risky
+
+# Detect incremental build: if iiab-complete exists, the base image already
+# has a full IIAB install. Remove the completion gate and reset STAGE so
+# iiab-configure can pick up additional roles from the new local_vars.yml.
+if [ -f /etc/iiab/install-flags/iiab-complete ]; then
+    echo "=== Incremental build detected (iiab-complete exists from base) ==="
+    rm -f /etc/iiab/install-flags/iiab-complete
+    echo "Removed iiab-complete flag"
+    if [ -f /etc/iiab/iiab.env ]; then
+        sed -i 's/STAGE=.*/STAGE=3/' /etc/iiab/iiab.env
+        echo "Reset STAGE to 3 for iiab-configure"
+    fi
+    echo "Running iiab-configure to install additional roles..."
+    cd /opt/iiab/iiab && ./iiab-configure
+else
+    echo "=== Fresh IIAB install ==="
+    curl -fLo /usr/sbin/iiab https://raw.githubusercontent.com/iiab/iiab-factory/master/iiab
+    chmod 0755 /usr/sbin/iiab
+    /usr/sbin/iiab --risky
+fi
 EOF_SCRIPT
     chmod +x "$BUILD_SUBVOL/root/run_build.sh"
 
@@ -689,8 +706,12 @@ expect {
     timeout { puts "\nTimed out waiting for IIAB install"; exit 1 }
     -re "BUILD_EXIT_CODE:(\[0-9\]+)" {
         set exit_code $expect_out(1,string)
-        if { $exit_code != 0 } {
-            puts "\nIIAB build script failed with exit code: $exit_code"
+        puts "\nIIAB build script failed with exit code: $exit_code"
+        exit 1
+    }
+    -re {#\s?$} {
+        if {![info exists exit_code]} {
+            puts "\nError: Prompt detected before BUILD_EXIT_CODE -- build script likely crashed"
             exit 1
         }
     }
@@ -700,7 +721,10 @@ expect {
     }
 }
 
-expect "login: " { send "root\r" }
+expect {
+    "login: " { send "root\r"; exp_continue }
+    -re {#\s?$}
+}
 expect -re {#\s?$} { send "usermod --lock --expiredate=1 root\r" }
 expect -re {#\s?$} { send "shutdown now\r" }
 expect eof
