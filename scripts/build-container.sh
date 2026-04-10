@@ -198,6 +198,7 @@ cleanup() {
     if [ "${BUILD_SUCCESS:-false}" = "true" ]; then
         return 0
     fi
+
     if [ "${CLEANUP_FAILED:-false}" = "true" ]; then
         # --cleanup: delete the failed build snapshot
         if btrfs subvolume show "$BUILDS_DIR/$NAME" >/dev/null 2>&1; then
@@ -212,15 +213,13 @@ cleanup() {
         echo "  To inspect: systemd-nspawn -q -D $BUILDS_DIR/$NAME --boot"
         echo "  To clean up: democtl cleanup --all  or  btrfs subvolume delete $BUILDS_DIR/$NAME"
     fi
+
     # Terminate any lingering nspawn container and clean up veth
     if [ -n "${NAME:-}" ]; then
         machinectl terminate "$NAME" 2>/dev/null || true
         ip link delete "vb-${NAME}" 2>/dev/null || true
     fi
-    if btrfs subvolume show "$BUILDS_DIR/$NAME" >/dev/null 2>&1; then
-        echo "Cleanup: removing failed build snapshot $NAME"
-        btrfs subvolume delete --commit-each "$BUILDS_DIR/$NAME" >/dev/null 2>&1 || true
-    fi
+
     # Unmount alternate storage if we mounted it (file-based flag survives subshells)
     if [ -f "${STATE_FILE_ALT_MOUNT:-}" ] && [ -n "${ALT_MOUNT:-}" ] && mountpoint -q "$ALT_MOUNT" 2>/dev/null; then
         umount -l "$ALT_MOUNT" 2>/dev/null || true
