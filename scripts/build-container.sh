@@ -662,13 +662,13 @@ if [ -f /etc/iiab/install-flags/iiab-complete ]; then
         echo "Reset STAGE to 3 for iiab-configure"
     fi
     echo "Running iiab-configure to install additional roles..."
-    cd /opt/iiab/iiab && ./iiab-configure
+    cd /opt/iiab/iiab && ANSIBLE_NOCOLOR=1 TERM=dumb ./iiab-configure
 else
     echo "=== Fresh IIAB install ==="
     echo "BUILD_TYPE:FRESH"
     curl -fLo /usr/sbin/iiab https://raw.githubusercontent.com/iiab/iiab-factory/master/iiab
     chmod 0755 /usr/sbin/iiab
-    /usr/sbin/iiab --risky
+    ANSIBLE_NOCOLOR=1 TERM=dumb /usr/sbin/iiab --risky
 fi
 EOF_SCRIPT
     chmod +x "$BUILD_SUBVOL/root/run_build.sh"
