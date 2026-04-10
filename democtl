@@ -65,6 +65,21 @@ release_lock() {
     flock -u "$LOCK_FD" 2>/dev/null || true
 }
 
+# Check if a demo build is currently in progress (PID file exists and process is alive).
+# Returns 0 if a build is actively running, 1 otherwise.
+is_build_in_progress() {
+    local name="$1"
+    local demo_dir="$ACTIVE_DIR/$name"
+    if [ -f "$demo_dir/build.pid" ]; then
+        local pid
+        pid=$(cat "$demo_dir/build.pid" 2>/dev/null || true)
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            return 0  # Build is in progress
+        fi
+    fi
+    return 1  # No active build
+}
+
 # Clean up a failed build: remove directory, reclaim the IP slot, and clean build artifacts.
 # MUST be called under lock.
 cleanup_failed_build() {
@@ -500,10 +515,17 @@ cmd_build() {
         if [ -f "$status_file" ]; then
             status=$(cat "$status_file" 2>/dev/null || echo "unknown")
         fi
-        
+
         case "$status" in
             pending|building)
-                echo "Warning: demo '$name' has an interrupted build (status: $status)." >&2
+                # Pokeyoke: reject if a build is actively running (PID alive)
+                if is_build_in_progress "$name"; then
+                    echo "Error: demo '$name' already has an active build in progress (status: $status)." >&2
+                    echo "  Use 'democtl status $name' to check progress, or 'democtl delete $name' to cancel." >&2
+                    release_lock
+                    return 1
+                fi
+                echo "Warning: demo '$name' has an interrupted build (status: $status, process exited)." >&2
                 echo "  Cleaning up failed build and retrying..." >&2
                 cleanup_failed_build "$name"
                 # Continue with fresh build
@@ -877,6 +899,10 @@ cmd_rebuild() {
     done
 
     if $rebuild_all; then
+        # Pokeyoke: acquire lock for the entire rebuild --all operation
+        # This is critical -- it stops ALL demos, deletes storage, and rebuilds everything.
+        acquire_lock 0 || return 1
+
         # Rebuild everything from scratch: tear down all demos, recreate storage
         echo "=== Rebuilding all demos from scratch ==="
         echo "This will: stop all demos, delete storage.btrfs, redownload Debian base"
@@ -890,6 +916,7 @@ cmd_rebuild() {
 
         if [ ${#names[@]} -eq 0 ]; then
             echo "No demos to rebuild."
+            release_lock
             return 0
         fi
 
@@ -1027,6 +1054,7 @@ cmd_rebuild() {
             bash "$SCRIPT_DIR/nginx-gen.sh"
         fi
 
+        release_lock
         return $exit_code
     fi
 
@@ -1467,12 +1495,16 @@ cmd_stop() {
         return 1
     fi
 
+    # Acquire lock for the entire stop operation
+    acquire_lock 0 || return 1
+
     local exit_code=0
     for name in "$@"; do
         local demo_dir="$ACTIVE_DIR/$name"
         if [ ! -d "$demo_dir" ]; then
             echo "Error: demo '$name' not found" >&2
             exit_code=1
+            # Continue processing other demos even on error
             continue
         fi
 
@@ -1526,6 +1558,8 @@ cmd_stop() {
         echo "stopped" > "$demo_dir/status"
         echo "Demo '$name' has been stopped."
     done
+
+    release_lock
     return $exit_code
 }
 
@@ -1571,6 +1605,9 @@ cmd_start() {
         echo "Usage: democtl start <name> [name ...]" >&2
         return 1
     fi
+
+    # Acquire lock for the entire start operation
+    acquire_lock 0 || return 1
 
     local exit_code=0
     for name in "$@"; do
@@ -1628,6 +1665,8 @@ cmd_start() {
         echo "running" > "$demo_dir/status"
         echo "Demo '$name' is now running!"
     done
+
+    release_lock
     return $exit_code
 }
 
@@ -1641,6 +1680,9 @@ cmd_restart() {
         echo "Usage: democtl restart <name> [name ...]" >&2
         return 1
     fi
+
+    # Acquire lock for the entire restart operation
+    acquire_lock 0 || return 1
 
     local exit_code=0
     for name in "$@"; do
@@ -1682,6 +1724,8 @@ cmd_restart() {
         echo "running" > "$demo_dir/status"
         echo "Demo '$name' has been restarted and is running!"
     done
+
+    release_lock
     return $exit_code
 }
 
