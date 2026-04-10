@@ -152,7 +152,10 @@ grow_storage_file() {
         fi
 
         echo "Growing storage.btrfs from ${current_size_gb}G to ${target_gb}G..."
-        umount -l "$STORAGE_ROOT" 2>/dev/null || true
+        btrfs filesystem sync "$STORAGE_ROOT" 2>/dev/null || true
+        btrfs subvolume sync "$STORAGE_ROOT" 2>/dev/null || true
+        sync
+        umount "$STORAGE_ROOT"
         truncate -s "${target_gb}G" "$STORAGE_BTRFS"
         # Remount will happen below in ensure_storage
     else
@@ -194,7 +197,7 @@ cleanup() {
     fi
     if btrfs subvolume show "$BUILDS_DIR/$NAME" >/dev/null 2>&1; then
         echo "Cleanup: removing failed build snapshot $NAME"
-        btrfs subvolume delete "$BUILDS_DIR/$NAME" >/dev/null 2>&1 || true
+        btrfs subvolume delete --commit-each "$BUILDS_DIR/$NAME" >/dev/null 2>&1 || true
     fi
     # Unmount alternate storage if we mounted it (file-based flag survives subshells)
     if [ -f "${STATE_FILE_ALT_MOUNT:-}" ] && [ -n "${ALT_MOUNT:-}" ] && mountpoint -q "$ALT_MOUNT" 2>/dev/null; then

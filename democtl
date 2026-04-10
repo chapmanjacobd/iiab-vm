@@ -158,7 +158,10 @@ grow_storage() {
     done
 
     echo "Growing ${storage_btrfs} from ${current_size_gb}G to ${target_gb}G..."
-    umount -l "$storage_root" 2>/dev/null || true
+    btrfs filesystem sync "$storage_root" 2>/dev/null || true
+    btrfs subvolume sync "$storage_root" 2>/dev/null || true
+    sync
+    umount "$storage_root"
     truncate -s "${target_gb}G" "$storage_btrfs"
     if [ "$build_on_disk" = "true" ]; then
         mount -o loop,compress-force=zstd:1,noatime,discard=async "$storage_btrfs" "$storage_root"
@@ -795,7 +798,7 @@ cmd_delete() {
             storage_mount="/var/iiab-demos/storage"
         fi
         if [ -n "$storage_mount" ]; then
-            btrfs subvolume delete "$storage_mount/builds/$name" >/dev/null 2>&1 || true
+            btrfs subvolume delete --commit-each "$storage_mount/builds/$name" >/dev/null 2>&1 || true
         fi
 
         # Remove image and symlinks
