@@ -244,7 +244,7 @@ if [ -n "$BASE_NAME" ]; then
         BASE_MOUNT="$DEMO_BASE_DIR/$(basename "$BASE_NAME" .btrfs)"
         BASE_SUBVOL="rootfs"
     else
-        BASE_SUBVOL="$BASE_NAME"
+        BASE_SUBVOL="builds/$BASE_NAME"
         BASE_BTRFS="$STORAGE_BTRFS"
         BASE_MOUNT="$STORAGE_ROOT"
     fi

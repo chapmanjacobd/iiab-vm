@@ -475,7 +475,7 @@ cmd_build() {
 
         local base_found=false
         if [ -f "$base_storage" ] && mountpoint -q "$base_mount" 2>/dev/null; then
-            if btrfs subvolume show "$base_mount/$base_name" >/dev/null 2>&1; then
+            if btrfs subvolume show "$base_mount/builds/$base_name" >/dev/null 2>&1; then
                 base_found=true
             fi
         fi
@@ -486,7 +486,7 @@ cmd_build() {
                 mount -o loop,noatime "$alt_storage" "$alt_mount" 2>/dev/null || true
             fi
             if mountpoint -q "$alt_mount" 2>/dev/null; then
-                if btrfs subvolume show "$alt_mount/$base_name" >/dev/null 2>&1; then
+                if btrfs subvolume show "$alt_mount/builds/$base_name" >/dev/null 2>&1; then
                     base_found=true
                     echo "Note: Base '$base_name' will be copied from alternate storage ($alt_storage) during build."
                 fi
