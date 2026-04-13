@@ -77,7 +77,6 @@ func runNspawnWithPTY(buildCtx context.Context, name, buildSubvol string, cfg Co
 		"systemd-nspawn",
 		"-q",
 		"--network-bridge="+network.BridgeName,
-		"--resolv-conf=off",
 		"-D", buildSubvol,
 		"-M", name,
 		"--boot",
