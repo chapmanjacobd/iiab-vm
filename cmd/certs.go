@@ -15,8 +15,8 @@ import (
 
 // CertsCmd manages TLS certificates for demos.
 type CertsCmd struct {
-	Setup  bool `help:"Setup/renew certificates for all active demos"`
-	Reset  bool `help:"Delete all .iiab.io certificates and regenerate nginx config"`
+	Setup bool `help:"Setup/renew certificates for all active demos"`
+	Reset bool `help:"Delete all .iiab.io certificates and regenerate nginx config"`
 }
 
 // Run executes the certs command.
@@ -38,7 +38,9 @@ func (c *CertsCmd) Run(ctx context.Context, globals *GlobalOptions) error {
 		return nil
 	}
 
-	return errors.New("no action specified. Use --setup to obtain/renew certificates or --reset to delete all certificates")
+	return errors.New(
+		"no action specified. Use --setup to obtain/renew certificates or --reset to delete all certificates",
+	)
 }
 
 // resetCerts deletes all .iiab.io certificates and regenerates nginx config.

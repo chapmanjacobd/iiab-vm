@@ -50,7 +50,7 @@ type DemoEntry struct {
 }
 
 // Generate regenerates the nginx config from all active demos.
-func Generate(ctx context.Context, stateDir string, noTLS ...bool) error {
+func Generate(ctx context.Context, stateDir string) error {
 	// Use flock to prevent concurrent generation.
 	// 30s timeout balances between waiting for in-progress generation and not hanging indefinitely.
 	lockFile := filepath.Join(stateDir, ".nginx-gen.lock")
@@ -60,14 +60,12 @@ func Generate(ctx context.Context, stateDir string, noTLS ...bool) error {
 	}
 	defer l.Release() //nolint:errcheck // unlock is best-effort for this advisory lock
 
-	ignoreTLS := len(noTLS) > 0 && noTLS[0]
-
 	names, listErr := config.List(stateDir)
 	if listErr != nil {
 		return listErr
 	}
 
-	entries, wildcardFound := collectDemoEntries(ctx, stateDir, names, ignoreTLS)
+	entries, wildcardFound := collectDemoEntries(ctx, stateDir, names)
 
 	// Generate config
 	var tmplStr string
@@ -77,7 +75,7 @@ func Generate(ctx context.Context, stateDir string, noTLS ...bool) error {
 		tmplStr = MainConfig
 	}
 
-	return writeAndReloadConfig(ctx, tmplStr, entries, wildcardFound, ignoreTLS)
+	return writeAndReloadConfig(ctx, tmplStr, entries, wildcardFound)
 }
 
 func hasValidCert(subdomain string) bool {
@@ -101,7 +99,11 @@ func hasValidCert(subdomain string) bool {
 	return len(fullData) > 0
 }
 
-func collectDemoEntries(ctx context.Context, stateDir string, names []string, ignoreTLS bool) ([]DemoEntry, *DemoEntry) {
+func collectDemoEntries(
+	ctx context.Context,
+	stateDir string,
+	names []string,
+) ([]DemoEntry, *DemoEntry) {
 	var entries []DemoEntry
 	var wildcardFound *DemoEntry
 
@@ -127,7 +129,7 @@ func collectDemoEntries(ctx context.Context, stateDir string, names []string, ig
 			Wildcard:  demo.Wildcard,
 		}
 
-		if !ignoreTLS && hasValidCert(subdomain) {
+		if hasValidCert(subdomain) {
 			entry.HasSSL = true
 		}
 
@@ -139,39 +141,42 @@ func collectDemoEntries(ctx context.Context, stateDir string, names []string, ig
 	return entries, wildcardFound
 }
 
-func writeAndReloadConfig(ctx context.Context, tmplStr string, entries []DemoEntry, wildcard *DemoEntry, noTLS bool) error {
+func writeAndReloadConfig(
+	ctx context.Context,
+	tmplStr string,
+	entries []DemoEntry,
+	wildcard *DemoEntry,
+) error {
 	tmpl, err := template.New("nginx").Parse(tmplStr)
 	if err != nil {
 		return err
 	}
 
 	var buf strings.Builder
-	if err := tmpl.Execute(&buf, struct {
+	if e := tmpl.Execute(&buf, struct {
 		Demos      []DemoEntry
 		Wildcard   *DemoEntry
 		BridgeName string
 		Gateway    string
-		NoTLS      bool
 	}{
 		Demos:      entries,
 		Wildcard:   wildcard,
 		BridgeName: network.BridgeName,
 		Gateway:    network.Gateway,
-		NoTLS:      noTLS,
-	}); err != nil {
-		return err
+	}); e != nil {
+		return e
 	}
 
 	configPath, enabledPath := GetNginxPaths()
 
-	if err := os.WriteFile(configPath, []byte(buf.String()), 0o644); err != nil {
-		return fmt.Errorf("cannot write nginx config: %w", err)
+	if e := os.WriteFile(configPath, []byte(buf.String()), 0o644); e != nil {
+		return fmt.Errorf("cannot write nginx config: %w", e)
 	}
 
 	if configPath != enabledPath {
 		os.Remove(enabledPath)
-		if err := os.Symlink(configPath, enabledPath); err != nil {
-			return err
+		if e := os.Symlink(configPath, enabledPath); e != nil {
+			return e
 		}
 	}
 
@@ -221,8 +226,9 @@ upstream {{.Subdomain}} {
 # HTTP fallback catch-all
 server {
     listen 80 default_server;
+    listen [::]:80 default_server;
     server_name _;
-    {{if .Wildcard}}
+    {{if and .Wildcard .HasSSL}}
     return 302 https://{{.Wildcard.Subdomain}}.iiab.io$request_uri;
     {{else}}
     return 404;
@@ -233,6 +239,7 @@ server {
 # {{.Name}} - HTTP
 server {
     listen 80;
+    listen [::]:80;
     server_name {{.Subdomain}}.iiab.io;
     {{if .HasSSL}}
     return 301 https://$host$request_uri;
@@ -253,6 +260,7 @@ server {
 # {{.Name}} - HTTPS
 server {
     listen 443 ssl;
+    listen [::]:443 ssl;
     server_name {{.Subdomain}}.iiab.io;
 
     ssl_certificate /etc/letsencrypt/live/{{.Subdomain}}.iiab.io/fullchain.pem;
@@ -278,9 +286,10 @@ server {
 {{end}}
 
 # HTTPS fallback catch-all
-{{if and .Wildcard (not .NoTLS)}}
+{{if and .Wildcard .HasSSL}}
 server {
     listen 443 ssl default_server;
+    listen [::]:443 ssl default_server;
     server_name _;
     ssl_certificate /etc/letsencrypt/live/{{.Wildcard.Subdomain}}.iiab.io/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/{{.Wildcard.Subdomain}}.iiab.io/privkey.pem;
