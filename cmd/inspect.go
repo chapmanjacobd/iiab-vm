@@ -275,6 +275,7 @@ func showLogs(ctx context.Context, globals *GlobalOptions, name string, forceBui
 // ShellCmd opens a shell in a running container.
 type ShellCmd struct {
 	Name string   `help:"Demo name"                           arg:""`
+	Boot bool     `help:"Boot the container if not running"   short:"b"`
 	Args []string `help:"Command to run inside the container" arg:"" optional:""`
 }
 
@@ -282,6 +283,26 @@ type ShellCmd struct {
 func (c *ShellCmd) Run(ctx context.Context, globals *GlobalOptions) error {
 	if err := ensureRoot(); err != nil {
 		return err
+	}
+
+	// Check if container is running
+	pid, err := getContainerPID(ctx, c.Name)
+	if err != nil || pid == "" || pid == "0" {
+		if !c.Boot {
+			return fmt.Errorf("container %s is not running (use --boot to start it)", c.Name)
+		}
+		// Boot the container
+		slog.InfoContext(ctx, "Booting container", "demo", c.Name)
+		if err := exec.CommandContext(ctx, "systemctl", "start", "systemd-nspawn@"+c.Name+".service").Run(); err != nil {
+			return fmt.Errorf("failed to boot container %s: %w", c.Name, err)
+		}
+		// Wait for container to be ready
+		time.Sleep(2 * time.Second)
+		// Re-get PID
+		pid, err = getContainerPID(ctx, c.Name)
+		if err != nil || pid == "" || pid == "0" {
+			return fmt.Errorf("container %s failed to start", c.Name)
+		}
 	}
 
 	// Try systemd-run -t first. It provides a proper TTY with job control,
@@ -305,11 +326,6 @@ func (c *ShellCmd) Run(ctx context.Context, globals *GlobalOptions) error {
 	slog.WarnContext(ctx, "systemd-run failed, falling back to nsenter", "demo", c.Name)
 
 	// Fallback to nsenter if systemd-run fails (e.g., no system bus in container)
-	pid, err := getContainerPID(ctx, c.Name)
-	if err != nil || pid == "" {
-		return fmt.Errorf("container %s is not running or PID not found: %w", c.Name, err)
-	}
-
 	return c.runNsenter(ctx, pid)
 }
 
