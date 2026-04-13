@@ -77,7 +77,7 @@ func Generate(ctx context.Context, stateDir string, noTLS ...bool) error {
 		tmplStr = MainConfig
 	}
 
-	return writeAndReloadConfig(ctx, tmplStr, entries, wildcardFound)
+	return writeAndReloadConfig(ctx, tmplStr, entries, wildcardFound, ignoreTLS)
 }
 
 func hasValidCert(subdomain string) bool {
@@ -139,7 +139,7 @@ func collectDemoEntries(ctx context.Context, stateDir string, names []string, ig
 	return entries, wildcardFound
 }
 
-func writeAndReloadConfig(ctx context.Context, tmplStr string, entries []DemoEntry, wildcard *DemoEntry) error {
+func writeAndReloadConfig(ctx context.Context, tmplStr string, entries []DemoEntry, wildcard *DemoEntry, noTLS bool) error {
 	tmpl, err := template.New("nginx").Parse(tmplStr)
 	if err != nil {
 		return err
@@ -151,11 +151,13 @@ func writeAndReloadConfig(ctx context.Context, tmplStr string, entries []DemoEnt
 		Wildcard   *DemoEntry
 		BridgeName string
 		Gateway    string
+		NoTLS      bool
 	}{
 		Demos:      entries,
 		Wildcard:   wildcard,
 		BridgeName: network.BridgeName,
 		Gateway:    network.Gateway,
+		NoTLS:      noTLS,
 	}); err != nil {
 		return err
 	}
@@ -276,7 +278,7 @@ server {
 {{end}}
 
 # HTTPS fallback catch-all
-{{if .Wildcard}}
+{{if and .Wildcard (not .NoTLS)}}
 server {
     listen 443 ssl default_server;
     server_name _;
