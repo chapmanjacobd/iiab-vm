@@ -8,8 +8,8 @@ import (
 
 const (
 	DebianTarURL = "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.tar.xz"
-	// Ubuntu cloud image URL for ubuntu26.04 (noble daily build)
-	UbuntuTarURL = "https://cdimage.ubuntu.com/ubuntu-server/daily-live/current/noble-server-cloudimg-amd64.img"
+	// UbuntuTarURL is the URL for the Ubuntu 26.04 (resolute) daily cloud image.
+	UbuntuTarURL = "https://cloud-images.ubuntu.com/resolute/current/resolute-server-cloudimg-amd64.img"
 	IIABRepo     = "https://github.com/iiab/iiab.git"
 
 	// expectTimeout is the default timeout for IIAB install (2 hours)

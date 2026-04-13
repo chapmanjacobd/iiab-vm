@@ -44,74 +44,27 @@ func ensureBaseSubvolume(ctx context.Context, info *storage.StorageInfo, onDisk 
 		}
 		slog.InfoContext(ctx, "Will download base subvolume from cloud")
 	} else if baseName != "" {
-		return fmt.Errorf("base subvolume '%s' not found and no alternate storage available", baseSubvol)
+		// Check if this is a known base that we can download
+		if !isDownloadableBase(baseSubvol) {
+			return fmt.Errorf("base subvolume '%s' not found and no alternate storage available", baseSubvol)
+		}
+		slog.InfoContext(ctx, "Will download base subvolume from cloud", "base", baseSubvol)
 	}
 
-	// Download and extract Debian genericcloud image
-	slog.InfoContext(ctx, "Downloading and extracting Debian 13 genericcloud image")
-
-	// Download tarball into a temp dir
-	tmpdir, mkdirErr := os.MkdirTemp(info.Mount, "debian-base.*")
-	if mkdirErr != nil {
-		return mkdirErr
-	}
-	defer os.RemoveAll(tmpdir)
-
-	// Download tarball
-	tarFile := filepath.Join(tmpdir, "debian.tar.xz")
-	if err := command.Run(ctx, "curl", "-fL", "-o", tarFile, DebianTarURL); err != nil {
-		return fmt.Errorf("cannot download Debian: %w", err)
-	}
-
-	// Extract tar
-	if err := command.Run(ctx, "tar", "-xJf", tarFile, "-C", tmpdir); err != nil {
-		return fmt.Errorf("cannot extract Debian tar: %w", err)
-	}
-
-	// Find the .raw disk image
-	rawImage, err := findFile(tmpdir, "*.raw")
-	if err != nil {
-		// Fallback to .qcow2
-		rawImage, err = findFile(tmpdir, "*.qcow2")
-		if err != nil {
-			return fmt.Errorf("no .raw or .qcow2 image found in tarball: %w", err)
+	// Download and extract cloud image
+	if isUbuntuBase(baseSubvol) {
+		slog.InfoContext(ctx, "Downloading and extracting Ubuntu cloud image")
+		if err := downloadAndExtractUbuntu(ctx, info, baseSubvol); err != nil {
+			return err
+		}
+	} else {
+		slog.InfoContext(ctx, "Downloading and extracting Debian 13 genericcloud image")
+		if err := downloadAndExtractDebian(ctx, info); err != nil {
+			return err
 		}
 	}
 
-	slog.InfoContext(ctx, "Found disk image", "path", rawImage)
-
-	// Use systemd-dissect to mount and extract root filesystem
-	extractDir, err := os.MkdirTemp(info.Mount, "debian-extract.*")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(extractDir)
-
-	if err := command.Run(ctx, "systemd-dissect", "--mount", "--mkdir", rawImage, extractDir); err != nil {
-		return fmt.Errorf("systemd-dissect mount failed: %w", err)
-	}
-	defer func() { _ = command.Run(ctx, "systemd-dissect", "--umount", extractDir) }()
-
-	// Create base subvolume and copy
-	if err := storage.CreateSubvolume(ctx, info.Mount, "base-debian"); err != nil {
-		return err
-	}
-
-	basePath := filepath.Join(info.Mount, "base-debian")
-	if err := command.Run(ctx, "cp", "-a", "--reflink=auto", extractDir+"/.", basePath+"/"); err != nil {
-		return err
-	}
-
-	// Clean up machine-id and hostname
-	os.Remove(filepath.Join(basePath, "etc/machine-id"))
-	os.Remove(filepath.Join(basePath, "etc/hostname"))
-
-	// Mark read-only
-	if err := storage.SetReadOnly(ctx, basePath); err != nil {
-		return err
-	}
-
-	slog.InfoContext(ctx, "Base subvolume ready", "path", basePath)
+	slog.InfoContext(ctx, "Base subvolume ready", "path", filepath.Join(info.Mount, baseSubvol))
 	return nil
 }
 
@@ -249,4 +202,133 @@ func findFile(dir, pattern string) (string, error) {
 		return "", fmt.Errorf("no file matching %s found in %s", pattern, dir)
 	}
 	return found, nil
+}
+
+// isUbuntuBase checks if the base name indicates an Ubuntu base.
+func isUbuntuBase(baseName string) bool {
+	return strings.Contains(strings.ToLower(baseName), "ubuntu")
+}
+
+// isDownloadableBase checks if the base name is a known downloadable base.
+func isDownloadableBase(baseName string) bool {
+	return isUbuntuBase(baseName) || baseName == "base-debian" || strings.Contains(strings.ToLower(baseName), "debian")
+}
+
+// downloadAndExtractDebian downloads and extracts the Debian cloud image.
+func downloadAndExtractDebian(ctx context.Context, info *storage.StorageInfo) error {
+	// Download tarball into a temp dir
+	tmpdir, mkdirErr := os.MkdirTemp(info.Mount, "debian-base.*")
+	if mkdirErr != nil {
+		return mkdirErr
+	}
+	defer os.RemoveAll(tmpdir)
+
+	// Download tarball
+	tarFile := filepath.Join(tmpdir, "debian.tar.xz")
+	if err := command.Run(ctx, "curl", "-fL", "-o", tarFile, DebianTarURL); err != nil {
+		return fmt.Errorf("cannot download Debian: %w", err)
+	}
+
+	// Extract tar
+	if err := command.Run(ctx, "tar", "-xJf", tarFile, "-C", tmpdir); err != nil {
+		return fmt.Errorf("cannot extract Debian tar: %w", err)
+	}
+
+	// Find the .raw disk image
+	rawImage, err := findFile(tmpdir, "*.raw")
+	if err != nil {
+		// Fallback to .qcow2
+		rawImage, err = findFile(tmpdir, "*.qcow2")
+		if err != nil {
+			return fmt.Errorf("no .raw or .qcow2 image found in tarball: %w", err)
+		}
+	}
+
+	slog.InfoContext(ctx, "Found disk image", "path", rawImage)
+
+	// Use systemd-dissect to mount and extract root filesystem
+	extractDir, err := os.MkdirTemp(info.Mount, "debian-extract.*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(extractDir)
+
+	if err := command.Run(ctx, "systemd-dissect", "--mount", "--mkdir", rawImage, extractDir); err != nil {
+		return fmt.Errorf("systemd-dissect mount failed: %w", err)
+	}
+	defer func() { _ = command.Run(ctx, "systemd-dissect", "--umount", extractDir) }()
+
+	// Create base subvolume and copy
+	if err := storage.CreateSubvolume(ctx, info.Mount, "base-debian"); err != nil {
+		return err
+	}
+
+	basePath := filepath.Join(info.Mount, "base-debian")
+	if err := command.Run(ctx, "cp", "-a", "--reflink=auto", extractDir+"/.", basePath+"/"); err != nil {
+		return err
+	}
+
+	// Clean up machine-id and hostname
+	os.Remove(filepath.Join(basePath, "etc/machine-id"))
+	os.Remove(filepath.Join(basePath, "etc/hostname"))
+
+	// Mark read-only
+	if err := storage.SetReadOnly(ctx, basePath); err != nil {
+		return err
+	}
+
+	slog.InfoContext(ctx, "Debian base subvolume ready", "path", basePath)
+	return nil
+}
+
+// downloadAndExtractUbuntu downloads and extracts the Ubuntu cloud image.
+func downloadAndExtractUbuntu(ctx context.Context, info *storage.StorageInfo, baseSubvol string) error {
+	// Download image into a temp dir
+	tmpdir, mkdirErr := os.MkdirTemp(info.Mount, "ubuntu-base.*")
+	if mkdirErr != nil {
+		return mkdirErr
+	}
+	defer os.RemoveAll(tmpdir)
+
+	// Download image
+	imgFile := filepath.Join(tmpdir, "ubuntu.img")
+	if err := command.Run(ctx, "curl", "-fL", "-o", imgFile, UbuntuTarURL); err != nil {
+		return fmt.Errorf("cannot download Ubuntu image: %w", err)
+	}
+
+	slog.InfoContext(ctx, "Found disk image", "path", imgFile)
+
+	// Use systemd-dissect to mount and extract root filesystem
+	extractDir, err := os.MkdirTemp(info.Mount, "ubuntu-extract.*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(extractDir)
+
+	if err := command.Run(ctx, "systemd-dissect", "--mount", "--mkdir", imgFile, extractDir); err != nil {
+		return fmt.Errorf("systemd-dissect mount failed: %w", err)
+	}
+	defer func() { _ = command.Run(ctx, "systemd-dissect", "--umount", extractDir) }()
+
+	// Create base subvolume and copy
+	if err := storage.CreateSubvolume(ctx, info.Mount, baseSubvol); err != nil {
+		return err
+	}
+
+	basePath := filepath.Join(info.Mount, baseSubvol)
+	if err := command.Run(ctx, "cp", "-a", "--reflink=auto", extractDir+"/.", basePath+"/"); err != nil {
+		return err
+	}
+
+	// Clean up machine-id and hostname
+	os.Remove(filepath.Join(basePath, "etc/machine-id"))
+	os.Remove(filepath.Join(basePath, "etc/hostname"))
+
+	// Mark read-only
+	if err := storage.SetReadOnly(ctx, basePath); err != nil {
+		return err
+	}
+
+	slog.InfoContext(ctx, "Ubuntu base subvolume ready", "path", basePath)
+	return nil
 }

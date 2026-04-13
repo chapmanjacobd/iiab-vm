@@ -26,20 +26,20 @@ const RAMSafetyBufferMB = 2048
 
 // BuildCmd builds a new demo container.
 type BuildCmd struct {
-	Name        string `help:"Demo name"                                                              arg:""`
-	Branch      string `help:"Git ref (branch, tag, or PR head)"                                             default:"master"`
-	Repo        string `help:"Source repository for IIAB"                                                    default:"https://github.com/iiab/iiab.git"`
-	Description string `help:"Human-readable description"                                                    default:""`
-	LocalVars   string `help:"Path to IIAB configuration variables"                                          default:"vars/local_vars_small.yml"`
-	Size        int    `help:"Virtual disk size in MB"                                                       default:"15000"`
-	Volatile    string `help:"Volatile mode (no, overlay, state, yes)"                                       default:"overlay"`
-	Start       bool   `help:"Start the demo after build succeeds"                                           default:"false"`
-	Cleanup     bool   `help:"Delete failed build snapshots immediately on failure"                          default:"false"`
-	Base        string `help:"Build on top of an existing base subvolume"                                    default:""`
-	Wildcard    bool   `help:"Use as wildcard for unknown subdomains"                                        default:"false"`
-	Disk        bool   `help:"Build on disk instead of tmpfs"                                                default:"false"`
-	SkipInstall bool   `help:"Skip the IIAB installer (useful for base image creation or testing)"           default:"false"`
-	Subdomain   string `help:"Override the subdomain (must be a valid subdomain, not auto-sanitized)"        default:""                                 name:"subdomain"`
+	Name        string `help:"Demo name"                                                                arg:""`
+	Branch      string `help:"Git ref (branch, tag, or PR head)"                                               default:"master"`
+	Repo        string `help:"Source repository for IIAB"                                                      default:"https://github.com/iiab/iiab.git"`
+	Description string `help:"Human-readable description"                                                      default:""`
+	LocalVars   string `help:"Path to IIAB configuration variables"                                            default:"vars/local_vars_small.yml"`
+	Size        int    `help:"Virtual disk size in MB"                                                         default:"15000"`
+	Volatile    string `help:"Volatile mode (no, overlay, state, yes)"                                         default:"overlay"`
+	Start       bool   `help:"Start the demo after build succeeds"                                             default:"false"`
+	Cleanup     bool   `help:"Delete failed build snapshots immediately on failure"                            default:"false"`
+	Base        string `help:"Build on top of an existing base subvolume (e.g., debian13, ubuntu26.04)"        default:""`
+	Wildcard    bool   `help:"Use as wildcard for unknown subdomains"                                          default:"false"`
+	Disk        bool   `help:"Build on disk instead of tmpfs"                                                  default:"false"`
+	SkipInstall bool   `help:"Skip the IIAB installer (useful for base image creation or testing)"             default:"false"`
+	Subdomain   string `help:"Override the subdomain (must be a valid subdomain, not auto-sanitized)"          default:""                                 name:"subdomain"`
 }
 
 // Run executes the build command.
