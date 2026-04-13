@@ -405,7 +405,7 @@ func (s *buildState) handleEOF(err error) (bool, error) {
 
 // handleMatch processes a pattern match.
 // Returns (continueLoop, error).
-func (s *buildState) handleMatch(ctx context.Context, match string, idx int) (bool, error) {
+func (s *buildState) handleMatch(ctx context.Context, match string, idx int) (continueLoop bool, _ error) {
 	switch idx {
 	case 0: // photographed
 		if s.buildType == "fresh" {
@@ -421,7 +421,7 @@ func (s *buildState) handleMatch(ctx context.Context, match string, idx int) (bo
 	case 2: // failed=0 or BUILD_EXIT_CODE
 		if s.sawPlayRecap && strings.Contains(match, "failed=0") {
 			slog.InfoContext(ctx, "PLAY RECAP shows failed=0 (success)")
-			return true, nil
+			return false, nil
 		}
 		if m := reBuildExitCode.FindStringSubmatch(match); m != nil {
 			s.exitCode = m[1]
