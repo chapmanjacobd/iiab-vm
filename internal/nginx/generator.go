@@ -3,7 +3,6 @@ package nginx
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -154,8 +153,10 @@ func writeAndReloadConfig(ctx context.Context, tmplStr string, entries []DemoEnt
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	if err := exec.CommandContext(ctx, "nginx", "-t").Run(); err != nil {
-		return errors.New("nginx config test failed")
+	testCmd := exec.CommandContext(ctx, "nginx", "-t")
+	testOut, err := testCmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("nginx config test failed: %s", strings.TrimSpace(string(testOut)))
 	}
 
 	if err := exec.CommandContext(ctx, "systemctl", "reload", "nginx").Run(); err != nil {
