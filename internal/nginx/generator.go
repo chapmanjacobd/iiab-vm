@@ -50,7 +50,7 @@ type DemoEntry struct {
 }
 
 // Generate regenerates the nginx config from all active demos.
-func Generate(ctx context.Context, stateDir string) error {
+func Generate(ctx context.Context, stateDir string, noTLS ...bool) error {
 	// Use flock to prevent concurrent generation.
 	// 30s timeout balances between waiting for in-progress generation and not hanging indefinitely.
 	lockFile := filepath.Join(stateDir, ".nginx-gen.lock")
@@ -60,12 +60,14 @@ func Generate(ctx context.Context, stateDir string) error {
 	}
 	defer l.Release() //nolint:errcheck // unlock is best-effort for this advisory lock
 
+	ignoreTLS := len(noTLS) > 0 && noTLS[0]
+
 	names, listErr := config.List(stateDir)
 	if listErr != nil {
 		return listErr
 	}
 
-	entries, wildcardFound := collectDemoEntries(ctx, stateDir, names)
+	entries, wildcardFound := collectDemoEntries(ctx, stateDir, names, ignoreTLS)
 
 	// Generate config
 	var tmplStr string
@@ -78,7 +80,28 @@ func Generate(ctx context.Context, stateDir string) error {
 	return writeAndReloadConfig(ctx, tmplStr, entries, wildcardFound)
 }
 
-func collectDemoEntries(ctx context.Context, stateDir string, names []string) ([]DemoEntry, *DemoEntry) {
+func hasValidCert(subdomain string) bool {
+	// Check the full chain (symlink in live/ → actual file in archive/)
+	fullchain := fmt.Sprintf("/etc/letsencrypt/live/%s.iiab.io/fullchain.pem", subdomain)
+	privkey := fmt.Sprintf("/etc/letsencrypt/live/%s.iiab.io/privkey.pem", subdomain)
+
+	// Both must exist
+	if !state.FileExists(fullchain) || !state.FileExists(privkey) {
+		return false
+	}
+
+	// Symlink might exist but point to missing archive entry; verify we can actually read them
+	fullData, err1 := os.ReadFile(fullchain)
+	_, err2 := os.ReadFile(privkey)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+
+	// Must contain actual PEM content (not an empty file)
+	return len(fullData) > 0
+}
+
+func collectDemoEntries(ctx context.Context, stateDir string, names []string, ignoreTLS bool) ([]DemoEntry, *DemoEntry) {
 	var entries []DemoEntry
 	var wildcardFound *DemoEntry
 
@@ -104,7 +127,7 @@ func collectDemoEntries(ctx context.Context, stateDir string, names []string) ([
 			Wildcard:  demo.Wildcard,
 		}
 
-		if state.FileExists(fmt.Sprintf("/etc/letsencrypt/live/%s.iiab.io/fullchain.pem", subdomain)) {
+		if !ignoreTLS && hasValidCert(subdomain) {
 			entry.HasSSL = true
 		}
 

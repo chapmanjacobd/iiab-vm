@@ -326,14 +326,16 @@ func cleanupOrphanedSubvolumes(ctx context.Context, globals *GlobalOptions, dryR
 }
 
 // ReloadCmd regenerates nginx config.
-type ReloadCmd struct{}
+type ReloadCmd struct {
+	NoTLS bool `help:"Ignore existing certificates and generate config without TLS"`
+}
 
 // Run executes the reload command.
 func (c *ReloadCmd) Run(ctx context.Context, globals *GlobalOptions) error {
 	if err := ensureRoot(); err != nil {
 		return err
 	}
-	return nginx.Generate(ctx, globals.StateDir)
+	return nginx.Generate(ctx, globals.StateDir, c.NoTLS)
 }
 
 // ReconcileCmd fixes resource counter drift and checks ghost IPs.

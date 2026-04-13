@@ -90,8 +90,10 @@ func deleteDemo(ctx context.Context, globals *GlobalOptions, name string) error 
 	}
 
 	// Clean up orphaned certs using subdomain from config
-	certDir := fmt.Sprintf("/etc/letsencrypt/live/%s.iiab.io", subdomain)
-	os.RemoveAll(certDir)
+	certBase := fmt.Sprintf("%s.iiab.io", subdomain)
+	os.RemoveAll(fmt.Sprintf("/etc/letsencrypt/live/%s", certBase))
+	os.RemoveAll(fmt.Sprintf("/etc/letsencrypt/archive/%s", certBase))
+	os.Remove(fmt.Sprintf("/etc/letsencrypt/renewal/%s.conf", certBase))
 
 	// Reload nginx
 	return nginx.Generate(ctx, globals.StateDir)
