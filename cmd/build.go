@@ -70,8 +70,14 @@ func (c *BuildCmd) Run(ctx context.Context, globals *GlobalOptions) error {
 		return err
 	}
 
-	// Create demo directory and write initial config
-	if err := c.setupDemoState(ctx, globals, demoDir, ip); err != nil {
+	// Write config immediately before any other state
+	if err := c.writeInitialConfig(ctx, globals, demoDir, ip); err != nil {
+		_ = lk.Release()
+		return err
+	}
+
+	// Set up remaining demo state (IP, status, build.log)
+	if err := c.setupRemainingDemoState(ctx, globals, demoDir, ip); err != nil {
 		_ = lk.Release()
 		return err
 	}
@@ -118,6 +124,13 @@ func (c *BuildCmd) checkExisting(ctx context.Context, globals *GlobalOptions, de
 		return nil
 	}
 
+	// If directory exists but config is missing, it's a partial/corrupted state
+	configPath := filepath.Join(demoDir, "config")
+	if !state.FileExists(configPath) {
+		slog.WarnContext(ctx, "Demo directory exists but config is missing, cleaning up...", "demo", c.Name)
+		return cleanupFailedBuild(ctx, globals, c.Name)
+	}
+
 	statusPath := filepath.Join(demoDir, "status")
 	status := "unknown"
 	if data, err := os.ReadFile(statusPath); err == nil {
@@ -143,10 +156,16 @@ func (c *BuildCmd) checkExisting(ctx context.Context, globals *GlobalOptions, de
 	}
 }
 
-func (c *BuildCmd) setupDemoState(ctx context.Context, globals *GlobalOptions, demoDir, ip string) error {
+func (c *BuildCmd) writeInitialConfig(ctx context.Context, globals *GlobalOptions, demoDir, ip string) error {
 	if err := os.MkdirAll(demoDir, 0o755); err != nil {
 		return err
 	}
+
+	sub := c.Subdomain
+	if sub == "" {
+		sub = state.SanitizeSubdomain(c.Name)
+	}
+	slog.InfoContext(ctx, "Demo queued", "demo", c.Name, "subdomain", sub, "ip", ip)
 
 	demo := &config.Demo{
 		Name:         c.Name,
@@ -165,25 +184,17 @@ func (c *BuildCmd) setupDemoState(ctx context.Context, globals *GlobalOptions, d
 		IP:           ip,
 	}
 
-	if err := demo.Write(globals.StateDir); err != nil {
-		return err
-	}
+	return demo.Write(globals.StateDir)
+}
+
+func (c *BuildCmd) setupRemainingDemoState(ctx context.Context, globals *GlobalOptions, demoDir, ip string) error {
 	if err := state.WriteIP(globals.StateDir, c.Name, ip); err != nil {
 		return err
 	}
 	if err := state.WriteFile(filepath.Join(demoDir, "build.log"), "", 0o644); err != nil {
 		return err
 	}
-	if err := config.WriteStatus(globals.StateDir, c.Name, "pending"); err != nil {
-		return err
-	}
-
-	sub := c.Subdomain
-	if sub == "" {
-		sub = state.SanitizeSubdomain(c.Name)
-	}
-	slog.InfoContext(ctx, "Demo queued", "demo", c.Name, "subdomain", sub, "ip", ip)
-	return nil
+	return config.WriteStatus(globals.StateDir, c.Name, "pending")
 }
 
 // runBuild executes the actual container build.
@@ -379,6 +390,22 @@ func (c *RebuildCmd) Run(ctx context.Context, globals *GlobalOptions) error {
 			return err
 		}
 
+		// Read all configs BEFORE deleting (so we have build params after delete)
+		type demoConfig struct {
+			name string
+			demo *config.Demo
+		}
+		var configs []demoConfig
+		for _, name := range names {
+			demo, err := config.Read(ctx, globals.StateDir, name)
+			if err != nil {
+				slog.WarnContext(ctx, "Cannot read config (will rebuild with defaults)", "demo", name, "error", err)
+				configs = append(configs, demoConfig{name: name})
+				continue
+			}
+			configs = append(configs, demoConfig{name: name, demo: demo})
+		}
+
 		// Delete each demo state and stop containers
 		for _, name := range names {
 			if err := deleteDemo(ctx, globals, name); err != nil {
@@ -396,6 +423,33 @@ func (c *RebuildCmd) Run(ctx context.Context, globals *GlobalOptions) error {
 			DiskTotalMB:     0,
 			DiskAllocatedMB: 0,
 		})
+
+		// Rebuild all demos with their original parameters
+		for _, cfg := range configs {
+			demo := cfg.demo
+			if demo != nil {
+				slog.InfoContext(
+					ctx,
+					"Rebuilding",
+					"demo",
+					cfg.name,
+					"repo",
+					demo.Repo,
+					"branch",
+					demo.Branch,
+					"size_mb",
+					demo.ImageSizeMB,
+				)
+			} else {
+				slog.InfoContext(ctx, "Rebuilding with defaults", "demo", cfg.name)
+			}
+			if err := rebuildOne(ctx, globals, cfg.name, demo); err != nil {
+				slog.ErrorContext(ctx, "Rebuild failed", "demo", cfg.name, "error", err)
+			} else {
+				slog.InfoContext(ctx, "Rebuilt successfully", "demo", cfg.name)
+			}
+		}
+		return nil
 	}
 
 	if len(names) == 0 {
@@ -405,8 +459,7 @@ func (c *RebuildCmd) Run(ctx context.Context, globals *GlobalOptions) error {
 	for _, name := range names {
 		demo, err := config.Read(ctx, globals.StateDir, name)
 		if err != nil {
-			slog.ErrorContext(ctx, "Cannot read config", "demo", name, "error", err)
-			continue
+			slog.WarnContext(ctx, "Cannot read config (will rebuild with defaults)", "demo", name, "error", err)
 		}
 
 		if !c.All {
@@ -416,40 +469,62 @@ func (c *RebuildCmd) Run(ctx context.Context, globals *GlobalOptions) error {
 			}
 		}
 
-		slog.InfoContext(
-			ctx,
-			"Rebuilding",
-			"demo",
-			name,
-			"repo",
-			demo.Repo,
-			"branch",
-			demo.Branch,
-			"size_mb",
-			demo.ImageSizeMB,
-		)
-		// Re-build with same parameters
-		buildCmd := BuildCmd{
-			Name:        demo.Name,
-			Branch:      demo.Branch,
-			Repo:        demo.Repo,
-			Description: demo.Description,
-			LocalVars:   demo.LocalVars,
-			Size:        demo.ImageSizeMB,
-			Volatile:    demo.VolatileMode,
-			Start:       false,
-			Cleanup:     demo.CleanupFailed,
-			Base:        demo.BaseName,
-			Wildcard:    demo.Wildcard,
-			Disk:        demo.BuildOnDisk,
-			SkipInstall: demo.SkipInstall,
-			Subdomain:   demo.Subdomain,
+		if demo != nil {
+			slog.InfoContext(
+				ctx,
+				"Rebuilding",
+				"demo",
+				name,
+				"repo",
+				demo.Repo,
+				"branch",
+				demo.Branch,
+				"size_mb",
+				demo.ImageSizeMB,
+			)
+		} else {
+			slog.InfoContext(ctx, "Rebuilding with defaults", "demo", name)
 		}
-		if err := buildCmd.Run(ctx, globals); err != nil {
+		if err := rebuildOne(ctx, globals, name, demo); err != nil {
 			slog.ErrorContext(ctx, "Rebuild failed", "demo", name, "error", err)
 		} else {
 			slog.InfoContext(ctx, "Rebuilt successfully", "demo", name)
 		}
 	}
 	return nil
+}
+
+// rebuildOne builds a single demo with the given config (or defaults if nil).
+func rebuildOne(ctx context.Context, globals *GlobalOptions, name string, demo *config.Demo) error {
+	buildCmd := BuildCmd{
+		Name:        name,
+		Branch:      "master",
+		Repo:        "https://github.com/iiab/iiab.git",
+		Description: "",
+		LocalVars:   "vars/local_vars_small.yml",
+		Size:        15000,
+		Volatile:    "overlay",
+		Start:       false,
+		Cleanup:     false,
+		Base:        "",
+		Wildcard:    false,
+		Disk:        false,
+		SkipInstall: false,
+		Subdomain:   "",
+	}
+	if demo != nil {
+		buildCmd.Branch = demo.Branch
+		buildCmd.Repo = demo.Repo
+		buildCmd.Description = demo.Description
+		buildCmd.LocalVars = demo.LocalVars
+		buildCmd.Size = demo.ImageSizeMB
+		buildCmd.Volatile = demo.VolatileMode
+		buildCmd.Cleanup = demo.CleanupFailed
+		buildCmd.Base = demo.BaseName
+		buildCmd.Wildcard = demo.Wildcard
+		buildCmd.Disk = demo.BuildOnDisk
+		buildCmd.SkipInstall = demo.SkipInstall
+		buildCmd.Subdomain = demo.Subdomain
+	}
+	return buildCmd.Run(ctx, globals)
 }
