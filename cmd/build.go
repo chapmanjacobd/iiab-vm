@@ -77,7 +77,7 @@ func (c *BuildCmd) Run(ctx context.Context, globals *GlobalOptions) error {
 	}
 
 	// Set up remaining demo state (IP, status, build.log)
-	if err := c.setupRemainingDemoState(ctx, globals, demoDir, ip); err != nil {
+	if err := c.setupRemainingDemoState(globals, demoDir, ip); err != nil {
 		_ = lk.Release()
 		return err
 	}
@@ -187,7 +187,7 @@ func (c *BuildCmd) writeInitialConfig(ctx context.Context, globals *GlobalOption
 	return demo.Write(globals.StateDir)
 }
 
-func (c *BuildCmd) setupRemainingDemoState(ctx context.Context, globals *GlobalOptions, demoDir, ip string) error {
+func (c *BuildCmd) setupRemainingDemoState(globals *GlobalOptions, demoDir, ip string) error {
 	if err := state.WriteIP(globals.StateDir, c.Name, ip); err != nil {
 		return err
 	}
@@ -373,125 +373,109 @@ func (c *RebuildCmd) Run(ctx context.Context, globals *GlobalOptions) error {
 		return err
 	}
 
-	names := c.Names
 	if c.All {
-		// Acquire lock for the entire factory reset operation
-		lk, lkErr := acquireLongLock(ctx, globals)
-		if lkErr != nil {
-			return lkErr
-		}
-		defer func() { _ = lk.Release() }()
-
-		slog.InfoContext(ctx, "Rebuilding all demos from scratch (factory reset)")
-
-		var err error
-		names, err = config.List(globals.StateDir)
-		if err != nil {
-			return err
-		}
-
-		// Read all configs BEFORE deleting (so we have build params after delete)
-		type demoConfig struct {
-			name string
-			demo *config.Demo
-		}
-		var configs []demoConfig
-		for _, name := range names {
-			demo, err := config.Read(ctx, globals.StateDir, name)
-			if err != nil {
-				slog.WarnContext(ctx, "Cannot read config (will rebuild with defaults)", "demo", name, "error", err)
-				configs = append(configs, demoConfig{name: name})
-				continue
-			}
-			configs = append(configs, demoConfig{name: name, demo: demo})
-		}
-
-		// Delete each demo state and stop containers
-		for _, name := range names {
-			if err := deleteDemo(ctx, globals, name); err != nil {
-				slog.ErrorContext(ctx, "Delete failed during factory reset", "demo", name, "error", err)
-			}
-		}
-
-		// Teardown storage (unmounts and removes btrfs files)
-		if err := storage.TeardownStorage(ctx); err != nil {
-			slog.WarnContext(ctx, "Storage teardown had issues", "error", err)
-		}
-
-		// Reset resource counters
-		_ = config.WriteResources(globals.StateDir, &config.Resources{
-			DiskTotalMB:     0,
-			DiskAllocatedMB: 0,
-		})
-
-		// Rebuild all demos with their original parameters
-		for _, cfg := range configs {
-			demo := cfg.demo
-			if demo != nil {
-				slog.InfoContext(
-					ctx,
-					"Rebuilding",
-					"demo",
-					cfg.name,
-					"repo",
-					demo.Repo,
-					"branch",
-					demo.Branch,
-					"size_mb",
-					demo.ImageSizeMB,
-				)
-			} else {
-				slog.InfoContext(ctx, "Rebuilding with defaults", "demo", cfg.name)
-			}
-			if err := rebuildOne(ctx, globals, cfg.name, demo); err != nil {
-				slog.ErrorContext(ctx, "Rebuild failed", "demo", cfg.name, "error", err)
-			} else {
-				slog.InfoContext(ctx, "Rebuilt successfully", "demo", cfg.name)
-			}
-		}
-		return nil
+		return c.rebuildAll(ctx, globals)
 	}
 
-	if len(names) == 0 {
+	if len(c.Names) == 0 {
 		return errors.New("no demos specified")
 	}
 
-	for _, name := range names {
+	for _, name := range c.Names {
 		demo, err := config.Read(ctx, globals.StateDir, name)
 		if err != nil {
 			slog.WarnContext(ctx, "Cannot read config (will rebuild with defaults)", "demo", name, "error", err)
 		}
-
-		if !c.All {
-			if err := deleteDemo(ctx, globals, name); err != nil {
-				slog.ErrorContext(ctx, "Delete failed", "demo", name, "error", err)
-				continue
-			}
-		}
-
-		if demo != nil {
-			slog.InfoContext(
-				ctx,
-				"Rebuilding",
-				"demo",
-				name,
-				"repo",
-				demo.Repo,
-				"branch",
-				demo.Branch,
-				"size_mb",
-				demo.ImageSizeMB,
-			)
-		} else {
-			slog.InfoContext(ctx, "Rebuilding with defaults", "demo", name)
-		}
-		if err := rebuildOne(ctx, globals, name, demo); err != nil {
+		if err := c.rebuildOne(ctx, globals, name, demo); err != nil {
 			slog.ErrorContext(ctx, "Rebuild failed", "demo", name, "error", err)
-		} else {
-			slog.InfoContext(ctx, "Rebuilt successfully", "demo", name)
 		}
 	}
 	return nil
+}
+
+// rebuildAll handles the --all code path.
+func (c *RebuildCmd) rebuildAll(ctx context.Context, globals *GlobalOptions) error {
+	lk, lkErr := acquireLongLock(ctx, globals)
+	if lkErr != nil {
+		return lkErr
+	}
+	defer func() { _ = lk.Release() }()
+
+	slog.InfoContext(ctx, "Rebuilding all demos from scratch (factory reset)")
+
+	names, err := config.List(globals.StateDir)
+	if err != nil {
+		return err
+	}
+
+	configs := c.readConfigs(ctx, globals, names)
+
+	for _, name := range names {
+		if err := deleteDemo(ctx, globals, name); err != nil {
+			slog.ErrorContext(ctx, "Delete failed during factory reset", "demo", name, "error", err)
+		}
+	}
+
+	if err := storage.TeardownStorage(ctx); err != nil {
+		slog.WarnContext(ctx, "Storage teardown had issues", "error", err)
+	}
+
+	_ = config.WriteResources(globals.StateDir, &config.Resources{
+		DiskTotalMB:     0,
+		DiskAllocatedMB: 0,
+	})
+
+	for _, cfg := range configs {
+		if err := c.rebuildOne(ctx, globals, cfg.name, cfg.demo); err != nil {
+			slog.ErrorContext(ctx, "Rebuild failed", "demo", cfg.name, "error", err)
+		} else {
+			slog.InfoContext(ctx, "Rebuilt successfully", "demo", cfg.name)
+		}
+	}
+	return nil
+}
+
+type demoConfig struct {
+	name string
+	demo *config.Demo
+}
+
+func (c *RebuildCmd) readConfigs(ctx context.Context, globals *GlobalOptions, names []string) []demoConfig {
+	var configs []demoConfig
+	for _, name := range names {
+		demo, err := config.Read(ctx, globals.StateDir, name)
+		if err != nil {
+			slog.WarnContext(ctx, "Cannot read config (will rebuild with defaults)", "demo", name, "error", err)
+			configs = append(configs, demoConfig{name: name})
+			continue
+		}
+		configs = append(configs, demoConfig{name: name, demo: demo})
+	}
+	return configs
+}
+
+func (c *RebuildCmd) rebuildOne(ctx context.Context, globals *GlobalOptions, name string, demo *config.Demo) error {
+	if err := deleteDemo(ctx, globals, name); err != nil {
+		return err
+	}
+
+	if demo != nil {
+		slog.InfoContext(
+			ctx,
+			"Rebuilding",
+			"demo",
+			name,
+			"repo",
+			demo.Repo,
+			"branch",
+			demo.Branch,
+			"size_mb",
+			demo.ImageSizeMB,
+		)
+	} else {
+		slog.InfoContext(ctx, "Rebuilding with defaults", "demo", name)
+	}
+	return rebuildOne(ctx, globals, name, demo)
 }
 
 // rebuildOne builds a single demo with the given config (or defaults if nil).

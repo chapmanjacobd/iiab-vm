@@ -275,8 +275,8 @@ func showLogs(ctx context.Context, globals *GlobalOptions, name string, forceBui
 // ShellCmd opens a shell in a running container.
 type ShellCmd struct {
 	Name string   `help:"Demo name"                           arg:""`
-	Boot bool     `help:"Boot the container if not running"   short:"b"`
-	Args []string `help:"Command to run inside the container" arg:"" optional:""`
+	Boot bool     `help:"Boot the container if not running"          short:"b"`
+	Args []string `help:"Command to run inside the container" arg:""           optional:""`
 }
 
 // Run executes the shell command.
@@ -293,8 +293,9 @@ func (c *ShellCmd) Run(ctx context.Context, globals *GlobalOptions) error {
 		}
 		// Boot the container
 		slog.InfoContext(ctx, "Booting container", "demo", c.Name)
-		if err := exec.CommandContext(ctx, "systemctl", "start", "systemd-nspawn@"+c.Name+".service").Run(); err != nil {
-			return fmt.Errorf("failed to boot container %s: %w", c.Name, err)
+		if bootErr := exec.CommandContext(ctx, "systemctl", "start", "systemd-nspawn@"+c.Name+".service").
+			Run(); bootErr != nil {
+			return fmt.Errorf("failed to boot container %s: %w", c.Name, bootErr)
 		}
 		// Wait for container to be ready
 		time.Sleep(2 * time.Second)
