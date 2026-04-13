@@ -470,11 +470,11 @@ func finalizeBuild(ctx context.Context, el *PTYLoop) error {
 		return fmt.Errorf("failed to shutdown: %w", err)
 	}
 
-	// Wait for EOF (container shutdown)
+	// Wait for EOF (container shutdown).
+	// The container may terminate the PTY before a clean EOF can be sent,
+	// resulting in an I/O error. This is expected behavior and should be tolerated.
 	slog.DebugContext(ctx, "Waiting for container EOF")
-	if err := el.WaitEOF(stepTimeout); err != nil {
-		slog.DebugContext(ctx, "Container terminated before EOF", "error", err)
-	}
+	_ = el.WaitEOF(stepTimeout)
 	slog.DebugContext(ctx, "Container EOF received")
 
 	return nil

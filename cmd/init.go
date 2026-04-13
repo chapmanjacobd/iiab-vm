@@ -68,11 +68,7 @@ func (c *InitCmd) Run(ctx context.Context, globals *GlobalOptions) error {
 		fmt.Fprintf(os.Stderr, "Warning: nginx config test failed: %v\n", err)
 	}
 
-	slog.InfoContext(ctx, "Host setup complete", "next_steps", []string{
-		"democtl build small --size 12000",
-		"democtl build medium --base small --size 8000",
-		"democtl build large --base medium --wildcard",
-	})
+	slog.InfoContext(ctx, "Host setup complete")
 	return nil
 }
 

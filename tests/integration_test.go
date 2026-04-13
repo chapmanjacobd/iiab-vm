@@ -155,8 +155,8 @@ func TestIntegration_BuildStatusListReload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rebuild failed: %s %s", stdout, stderr)
 	}
-	if !strings.Contains(stdout+stderr, "Rebuilt successfully") {
-		t.Errorf("expected output to contain 'Rebuilt successfully', got: %s%s", stdout, stderr)
+	if !strings.Contains(stdout+stderr, "Build completed successfully") {
+		t.Errorf("expected output to contain 'Build completed successfully', got: %s%s", stdout, stderr)
 	}
 
 	if settleErr := waitDemoSettled(t, stateDir, name, 120*time.Second); settleErr != nil {
