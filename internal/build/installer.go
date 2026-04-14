@@ -216,17 +216,6 @@ func runExpectAutomation(ctx context.Context, el *PTYLoop, buildSubvol string, c
 		return err
 	}
 
-	// Fresh installs (iiab-install) trigger a system reboot.
-	// Incremental builds (iiab-configure) do not reboot.
-	if !isIncremental {
-		if _, err := el.WaitForString("login: ", stepTimeout); err != nil {
-			return fmt.Errorf("timeout waiting for reboot login prompt: %w", err)
-		}
-		if err := el.SendLine("root"); err != nil {
-			return fmt.Errorf("failed to login after reboot: %w", err)
-		}
-	}
-
 	return finalizeBuild(ctx, el)
 }
 
