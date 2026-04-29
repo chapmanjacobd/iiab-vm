@@ -128,6 +128,10 @@ func AddContainerIsolation(ctx context.Context, extIF string) error {
 	// This is done on every call to ensure it is not lost to other network management tools.
 	_ = command.Run(ctx, "iptables", "-P", "FORWARD", "ACCEPT")
 
+	if err := ensureFirewalldForwarding(ctx, extIF); err != nil {
+		return err
+	}
+
 	if isolationRulesActive(ctx, extIF) {
 		slog.InfoContext(ctx, "Container isolation rules already active")
 		return nil

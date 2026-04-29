@@ -81,6 +81,7 @@ The Debian base is stored once as a read-only subvolume. Each build is a CoW sna
 - Internal: Containers receive unique IPs from `10.0.3.x`
 - External: `iiab-vm reload` dynamically maps subdomains to container IPs via Nginx templates
 - Isolation: nftables rules block container-to-container traffic while allowing internet access
+- Firewalld: when `firewall-cmd` is active, `iiab-vm` also trusts `iiab-br0` and adds a direct forward rule for bridge egress so `systemd-nspawn` container traffic is not blocked by host policy
 
 ## Development & Troubleshooting
 
