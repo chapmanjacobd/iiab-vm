@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/config"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/config"
 )
 
 // CheckDependencies verifies that all required external tools are installed.
@@ -47,7 +47,7 @@ func CheckDependencies(ctx context.Context) error {
 
 	if len(missing) > 0 {
 		return fmt.Errorf(
-			"missing required system dependencies: %v, please install them before running democtl",
+			"missing required system dependencies: %v, please install them before running iiab-vm",
 			missing,
 		)
 	}

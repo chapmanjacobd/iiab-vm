@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/state"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/state"
 )
 
 func TestFileExistsTrueAndFalse(t *testing.T) {
@@ -169,8 +169,8 @@ func TestPathConstructionFunctions(t *testing.T) {
 
 	// Test LockFile
 	lockFile := state.LockFile(stateDir)
-	if lockFile != "/test/state/.democtl.lock" {
-		t.Errorf("expected lock file '/test/state/.democtl.lock', got %q", lockFile)
+	if lockFile != "/test/state/.iiab-vm.lock" {
+		t.Errorf("expected lock file '/test/state/.iiab-vm.lock', got %q", lockFile)
 	}
 
 	// Test DemoDir
@@ -184,8 +184,8 @@ func TestConstantsConsistency(t *testing.T) {
 	if state.ResourceFileName != "resources" {
 		t.Errorf("expected resource file name 'resources', got %q", state.ResourceFileName)
 	}
-	if state.LockFileName != ".democtl.lock" {
-		t.Errorf("expected lock file name '.democtl.lock', got %q", state.LockFileName)
+	if state.LockFileName != ".iiab-vm.lock" {
+		t.Errorf("expected lock file name '.iiab-vm.lock', got %q", state.LockFileName)
 	}
 	if state.IIABBridge != "iiab-br0" {
 		t.Errorf("expected bridge 'iiab-br0', got %q", state.IIABBridge)

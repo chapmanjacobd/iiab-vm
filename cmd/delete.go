@@ -8,11 +8,11 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/config"
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/lock"
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/nginx"
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/state"
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/storage"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/config"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/lock"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/nginx"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/state"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/storage"
 )
 
 // DeleteCmd stops and deletes demo(s).

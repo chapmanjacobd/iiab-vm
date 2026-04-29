@@ -11,7 +11,7 @@ func TestSettleCommand(t *testing.T) {
 	name := uniqueDemoName("settle-demo")
 
 	// 1. No demos
-	stdout, _, err := runDemoctl(t, stateDir, "settle", "--timeout", "1")
+	stdout, _, err := runIIABVM(t, stateDir, "settle", "--timeout", "1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -20,16 +20,16 @@ func TestSettleCommand(t *testing.T) {
 	}
 
 	// 2. Queue a demo
-	_, _, err = runDemoctl(t, stateDir, "build", name, "--skip-install")
+	_, _, err = runIIABVM(t, stateDir, "build", name, "--skip-install")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	// Cleanup storage on exit (btrfs subvolumes are global, not under state-dir)
-	defer runDemoctl(t, stateDir, "delete", name)
+	defer runIIABVM(t, stateDir, "delete", name)
 
 	// 3. Settle
-	stdout, stderr, err := runDemoctl(t, stateDir, "settle", "--timeout", "10")
+	stdout, stderr, err := runIIABVM(t, stateDir, "settle", "--timeout", "10")
 	if err != nil {
 		t.Fatalf("settle failed: %s %s", stdout, stderr)
 	}

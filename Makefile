@@ -1,5 +1,5 @@
 # Variables
-BINARY=democtl
+BINARY=iiab-vm
 DESTDIR?=/usr/local/bin
 
 # Phony targets

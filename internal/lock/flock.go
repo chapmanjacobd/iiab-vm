@@ -1,4 +1,4 @@
-// Package lock provides flock-based mutual exclusion for democtl operations.
+// Package lock provides flock-based mutual exclusion for iiab-vm operations.
 package lock
 
 import (
@@ -13,8 +13,8 @@ import (
 
 	"github.com/gofrs/flock"
 
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/state"
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/sys"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/state"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/sys"
 )
 
 var (
@@ -65,7 +65,7 @@ func acquireInternal(ctx context.Context, lockFile string, timeout int) (*Lock, 
 		return nil, fmt.Errorf("lock error: %w", err)
 	}
 	if !acquired {
-		return nil, errors.New("another democtl operation is in progress (lock held)")
+		return nil, errors.New("another iiab-vm operation is in progress (lock held)")
 	}
 
 	return &Lock{flock: f}, nil

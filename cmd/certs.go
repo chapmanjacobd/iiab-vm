@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/nginx"
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/tls"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/nginx"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/tls"
 )
 
 // CertsCmd manages TLS certificates for demos.

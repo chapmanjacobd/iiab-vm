@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/config"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/config"
 )
 
 func TestBuildCommand(t *testing.T) {
@@ -16,10 +16,10 @@ func TestBuildCommand(t *testing.T) {
 	name := uniqueDemoName("test-demo")
 
 	// Cleanup storage on exit
-	defer runDemoctl(t, stateDir, "delete", name)
+	defer runIIABVM(t, stateDir, "delete", name)
 
 	// 1. Initial build command
-	stdout, stderr, err := runDemoctl(t, stateDir, "build", name, "--skip-install", "--size", "12000")
+	stdout, stderr, err := runIIABVM(t, stateDir, "build", name, "--skip-install", "--size", "12000")
 	if err != nil {
 		t.Fatalf("build command failed: %s %s", stdout, stderr)
 	}
@@ -92,7 +92,7 @@ func TestBuildCommandInvalidName(t *testing.T) {
 	stateDir := setupStateDir(t)
 	name := "invalid name!"
 
-	_, stderr, err := runDemoctl(t, stateDir, "build", name)
+	_, stderr, err := runIIABVM(t, stateDir, "build", name)
 	if err == nil {
 		t.Fatalf("expected error for invalid name")
 	}

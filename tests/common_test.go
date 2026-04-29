@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-var democtlPath string
+var iiabVMPath string
 
 func isVerboseTest() bool {
 	// Check for -v or -test.v flags before test framework parses them
@@ -39,17 +39,17 @@ func TestMain(m *testing.M) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, opts))
 	slog.SetDefault(logger)
 
-	tmpDir, err := os.MkdirTemp("", "democtl-test-bin-*")
+	tmpDir, err := os.MkdirTemp("", "iiab-vm-test-bin-*")
 	if err != nil {
 		panic(err)
 	}
 	defer os.RemoveAll(tmpDir)
 
-	binName := "democtl"
+	binName := "iiab-vm"
 	if runtime.GOOS == "windows" {
 		binName += ".exe"
 	}
-	democtlPath = filepath.Join(tmpDir, binName)
+	iiabVMPath = filepath.Join(tmpDir, binName)
 
 	// Get root directory (where go.mod is)
 	pc, filename, line, ok := runtime.Caller(0)
@@ -61,31 +61,31 @@ func TestMain(m *testing.M) {
 	_ = line
 	rootDir := filepath.Join(filepath.Dir(filename), "..")
 
-	cmd := exec.Command("go", "build", "-o", democtlPath, ".")
+	cmd := exec.Command("go", "build", "-o", iiabVMPath, ".")
 	cmd.Dir = rootDir
 	if out, err := cmd.CombinedOutput(); err != nil {
-		println("failed to build democtl:", err.Error(), "\nOutput:", string(out))
+		println("failed to build iiab-vm:", err.Error(), "\nOutput:", string(out))
 		os.Exit(1)
 	}
 
 	os.Exit(m.Run())
 }
 
-// runDemoctl runs the built democtl binary with the given arguments.
+// runIIABVM runs the built iiab-vm binary with the given arguments.
 // It automatically prepends the --state-dir argument and sets up the environment
 // with necessary mocks (like IIAB_MOCK_CERTS) to allow tests to run on host.
-func runDemoctl(t *testing.T, stateDir string, args ...string) (stdoutStr, stderrStr string, err error) {
+func runIIABVM(t *testing.T, stateDir string, args ...string) (stdoutStr, stderrStr string, err error) {
 	// Prepend state dir if provided
 	fullArgs := args
 	if stateDir != "" {
 		fullArgs = append([]string{"--state-dir", stateDir}, args...)
 	}
 
-	cmd := exec.Command(democtlPath, fullArgs...)
+	cmd := exec.Command(iiabVMPath, fullArgs...)
 	cmd.Env = append(os.Environ(),
 		"IIAB_NGINX_CONF="+filepath.Join(stateDir, "nginx.conf"),
 		"IIAB_MOCK_CERTS=true",
-		"DEMOCTL_VERBOSE=1")
+		"IIAB_VM_VERBOSE=1")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -94,18 +94,18 @@ func runDemoctl(t *testing.T, stateDir string, args ...string) (stdoutStr, stder
 	return stdout.String(), stderr.String(), err
 }
 
-// newDemoctlCommand returns a configured [exec.Cmd] for the built democtl binary.
-func newDemoctlCommand(t *testing.T, stateDir string, args ...string) *exec.Cmd {
+// newIIABVMCommand returns a configured [exec.Cmd] for the built iiab-vm binary.
+func newIIABVMCommand(t *testing.T, stateDir string, args ...string) *exec.Cmd {
 	fullArgs := args
 	if stateDir != "" {
 		fullArgs = append([]string{"--state-dir", stateDir}, args...)
 	}
 
-	cmd := exec.Command(democtlPath, fullArgs...)
+	cmd := exec.Command(iiabVMPath, fullArgs...)
 	cmd.Env = append(os.Environ(),
 		"IIAB_NGINX_CONF="+filepath.Join(stateDir, "nginx.conf"),
 		"IIAB_MOCK_CERTS=true",
-		"DEMOCTL_VERBOSE=1")
+		"IIAB_VM_VERBOSE=1")
 	return cmd
 }
 

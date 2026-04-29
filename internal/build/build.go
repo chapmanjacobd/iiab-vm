@@ -10,9 +10,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/config"
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/state"
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/storage"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/config"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/state"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/storage"
 )
 
 // Config holds the parameters for a build.

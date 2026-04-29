@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/build"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/build"
 )
 
 func TestShellCommand(t *testing.T) {
@@ -17,16 +17,16 @@ func TestShellCommand(t *testing.T) {
 	name := uniqueDemoName("shell-demo")
 
 	// 0. Cleanup on exit
-	defer runDemoctl(t, stateDir, "delete", name)
+	defer runIIABVM(t, stateDir, "delete", name)
 
 	// 1. Initial build
-	_, _, err := runDemoctl(t, stateDir, "build", name, "--skip-install")
+	_, _, err := runIIABVM(t, stateDir, "build", name, "--skip-install")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	// 2. Start
-	_, _, err = runDemoctl(t, stateDir, "start", name)
+	_, _, err = runIIABVM(t, stateDir, "start", name)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestShellCommand(t *testing.T) {
 	}
 	defer el.Close()
 
-	cmd := newDemoctlCommand(t, stateDir, "shell", name)
+	cmd := newIIABVMCommand(t, stateDir, "shell", name)
 	err = el.StartCommand(cmd)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

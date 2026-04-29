@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/state"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/state"
 )
 
 func TestEnsureStateDirsIdempotency(t *testing.T) {
@@ -27,7 +27,7 @@ func TestEnsureStateDirsIdempotency(t *testing.T) {
 	}
 }
 
-func TestEnsureStateDirsIdempotencyFromDemoctl(t *testing.T) {
+func TestEnsureStateDirsIdempotencyFromIIABVM(t *testing.T) {
 	tmpDir := t.TempDir()
 	dirs := []string{
 		tmpDir,

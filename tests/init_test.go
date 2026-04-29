@@ -11,7 +11,7 @@ func TestInitCommand(t *testing.T) {
 	stateDir := setupStateDir(t)
 
 	// Run init
-	stdout, stderr, err := runDemoctl(t, stateDir, "init")
+	stdout, stderr, err := runIIABVM(t, stateDir, "init")
 	if err != nil {
 		t.Fatalf("init failed: %s %s", stdout, stderr)
 	}

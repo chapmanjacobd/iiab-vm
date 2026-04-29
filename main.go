@@ -6,7 +6,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/cmd"
+	"github.com/chapmanjacobd/iiab-vm/v2/cmd"
 )
 
 func main() {

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/storage"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/storage"
 )
 
 func TestParseSizeToMBGiB(t *testing.T) {

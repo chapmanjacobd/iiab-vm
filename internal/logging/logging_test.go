@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/logging"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/logging"
 )
 
 func TestPlainHandlerOutput(t *testing.T) {

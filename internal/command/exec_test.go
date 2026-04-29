@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/command"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/command"
 )
 
 func TestRunSuccessReturnsNil(t *testing.T) {

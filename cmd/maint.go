@@ -10,12 +10,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/config"
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/network"
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/nginx"
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/state"
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/storage"
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/sys"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/config"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/network"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/nginx"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/state"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/storage"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/sys"
 )
 
 // CleanupCmd cleans up failed builds and orphaned subvolumes.

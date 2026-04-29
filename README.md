@@ -13,12 +13,12 @@ sudo make small-medium-large
 ### Install directly, without `git clone`
 
 ```sh
-go install github.com/chapmanjacobd/iiab-whitelabel/v2@latest
+go install github.com/chapmanjacobd/iiab-vm/v2@latest
 ```
 
-## The `democtl` CLI
+## The `iiab-vm` CLI
 
-The `democtl` tool is the primary interface for managing demos.
+The `iiab-vm` tool is the primary interface for managing demos.
 
 ### Core Commands
 
@@ -79,24 +79,24 @@ The Debian base is stored once as a read-only subvolume. Each build is a CoW sna
 ### Network & Routing
 
 - Internal: Containers receive unique IPs from `10.0.3.x`
-- External: `democtl reload` dynamically maps subdomains to container IPs via Nginx templates
+- External: `iiab-vm reload` dynamically maps subdomains to container IPs via Nginx templates
 - Isolation: nftables rules block container-to-container traffic while allowing internet access
 
 ## Development & Troubleshooting
 
 ### Testing Pull Requests
 
-Test any IIAB PR by pointing `democtl` to the specific git ref:
+Test any IIAB PR by pointing `iiab-vm` to the specific git ref:
 
 ```bash
-democtl build pr123 --branch refs/pull/123/head --description "Testing PR #123"
+iiab-vm build pr123 --branch refs/pull/123/head --description "Testing PR #123"
 ```
 
 Then visit https://**pr123**.iiab.io/home/
 
 ### Logs
 
-- Build: `democtl logs <name>` or `/var/lib/iiab-demos/active/<name>/build.log`
+- Build: `iiab-vm logs <name>` or `/var/lib/iiab-demos/active/<name>/build.log`
 - Runtime: `journalctl -u systemd-nspawn@<name>.service`
 
 ### Failed Builds
@@ -104,14 +104,14 @@ Then visit https://**pr123**.iiab.io/home/
 When a build fails, the snapshot is preserved for inspection:
 
 ```bash
-sudo democtl status <name>         # Shows status=failed
-sudo democtl logs <name>           # Review build log
-sudo democtl shell <name>          # Check inside container
+sudo iiab-vm status <name>         # Shows status=failed
+sudo iiab-vm logs <name>           # Review build log
+sudo iiab-vm shell <name>          # Check inside container
 
 # Inspect the failed container
 sudo systemd-nspawn -q -D /run/iiab-demos/storage/builds/<name> --boot
 
 # Clean up when done
-sudo democtl cleanup --all         # Remove all failed demos and orphaned subvolumes
-sudo democtl cleanup --dry-run     # Preview what would be cleaned up
+sudo iiab-vm cleanup --all         # Remove all failed demos and orphaned subvolumes
+sudo iiab-vm cleanup --dry-run     # Preview what would be cleaned up
 ```

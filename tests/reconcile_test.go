@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/config"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/config"
 )
 
 func TestReconcileCommand(t *testing.T) {
@@ -16,7 +16,7 @@ func TestReconcileCommand(t *testing.T) {
 	name := uniqueDemoName("reconcile-demo")
 
 	// 1. Initialize a demo with 15000 MB size
-	_, _, err := runDemoctl(t, stateDir, "build", name, "--skip-install", "--size", "15000")
+	_, _, err := runIIABVM(t, stateDir, "build", name, "--skip-install", "--size", "15000")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -28,7 +28,7 @@ func TestReconcileCommand(t *testing.T) {
 	}
 
 	// Cleanup storage on exit (btrfs subvolumes are global, not under state-dir)
-	defer runDemoctl(t, stateDir, "delete", name)
+	defer runIIABVM(t, stateDir, "delete", name)
 
 	// 2. Clear resource usage file or set to incorrect values
 	resourceFile := filepath.Join(stateDir, "resources")
@@ -38,7 +38,7 @@ func TestReconcileCommand(t *testing.T) {
 	}
 
 	// 3. Run reconcile
-	stdout, stderr, err := runDemoctl(t, stateDir, "reconcile")
+	stdout, stderr, err := runIIABVM(t, stateDir, "reconcile")
 	if err != nil {
 		t.Fatalf("reconcile failed: %s %s", stdout, stderr)
 	}

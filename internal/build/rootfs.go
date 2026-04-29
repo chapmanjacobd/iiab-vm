@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/command"
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/state"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/command"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/state"
 )
 
 // prepareRootfs sets up the container filesystem for IIAB.

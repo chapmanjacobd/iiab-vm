@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/config"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/config"
 )
 
 // StartCmd starts stopped demo(s).

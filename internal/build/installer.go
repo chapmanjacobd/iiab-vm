@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/command"
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/network"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/command"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/network"
 )
 
 // Pre-compiled regexes for build output parsing.

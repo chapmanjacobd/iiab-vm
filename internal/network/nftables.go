@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/command"
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/config"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/command"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/config"
 )
 
 // SetupNAT sets up nftables NAT masquerade for containers.

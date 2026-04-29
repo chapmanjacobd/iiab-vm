@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/state"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/state"
 )
 
 const (

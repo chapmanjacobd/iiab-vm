@@ -8,7 +8,7 @@ import (
 
 	"github.com/gofrs/flock"
 
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/lock"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/lock"
 )
 
 func init() {
@@ -17,7 +17,7 @@ func init() {
 
 func TestLockAcquireAndRelease(t *testing.T) {
 	tmpDir := t.TempDir()
-	lockFile := filepath.Join(tmpDir, ".democtl.lock")
+	lockFile := filepath.Join(tmpDir, ".iiab-vm.lock")
 
 	lk, err := lock.AcquireShort(context.Background(), lockFile)
 	if err != nil {
@@ -35,7 +35,7 @@ func TestLockAcquireAndRelease(t *testing.T) {
 
 func TestConcurrentLockRejection(t *testing.T) {
 	tmpDir := t.TempDir()
-	lockFile := filepath.Join(tmpDir, ".democtl.lock")
+	lockFile := filepath.Join(tmpDir, ".iiab-vm.lock")
 
 	lk1, err := lock.AcquireShort(context.Background(), lockFile)
 	if err != nil {
@@ -64,7 +64,7 @@ func TestStaleLockCleanup(t *testing.T) {
 	// flock auto-releases on process death, so a "stale" lock
 	// is simply one where the process died -- the next acquire succeeds.
 	tmpDir := t.TempDir()
-	lockFile := filepath.Join(tmpDir, ".democtl.lock")
+	lockFile := filepath.Join(tmpDir, ".iiab-vm.lock")
 
 	// Acquire and release simulating a process that held it
 	lk, err := lock.AcquireShort(context.Background(), lockFile)
@@ -83,7 +83,7 @@ func TestStaleLockCleanup(t *testing.T) {
 
 func TestLockFileCleanupAfterRelease(t *testing.T) {
 	tmpDir := t.TempDir()
-	lockFile := filepath.Join(tmpDir, ".democtl.lock")
+	lockFile := filepath.Join(tmpDir, ".iiab-vm.lock")
 
 	lk, err := lock.AcquireShort(context.Background(), lockFile)
 	if err != nil {

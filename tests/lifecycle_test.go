@@ -13,7 +13,7 @@ func TestLifecycleCommand(t *testing.T) {
 	name := uniqueDemoName("demo-lifecycle")
 
 	// 1. Build
-	stdout, stderr, err := runDemoctl(t, stateDir, "build", name, "--skip-install")
+	stdout, stderr, err := runIIABVM(t, stateDir, "build", name, "--skip-install")
 	if err != nil {
 		t.Fatalf("build failed: %s %s", stdout, stderr)
 	}
@@ -25,10 +25,10 @@ func TestLifecycleCommand(t *testing.T) {
 	}
 
 	// Cleanup storage on exit (btrfs subvolumes are global, not under state-dir)
-	defer runDemoctl(t, stateDir, "delete", name)
+	defer runIIABVM(t, stateDir, "delete", name)
 
 	// 2. Status check
-	stdout, _, err = runDemoctl(t, stateDir, "status", name, "--toml")
+	stdout, _, err = runIIABVM(t, stateDir, "status", name, "--toml")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -41,7 +41,7 @@ func TestLifecycleCommand(t *testing.T) {
 	}
 
 	// 3. Start
-	stdout, stderr, err = runDemoctl(t, stateDir, "start", name)
+	stdout, stderr, err = runIIABVM(t, stateDir, "start", name)
 	if err != nil {
 		t.Fatalf("start failed: %s %s", stdout, stderr)
 	}
@@ -50,7 +50,7 @@ func TestLifecycleCommand(t *testing.T) {
 	time.Sleep(1 * time.Second)
 
 	// 4. Status check
-	stdout, _, err = runDemoctl(t, stateDir, "status", name, "--toml")
+	stdout, _, err = runIIABVM(t, stateDir, "status", name, "--toml")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestLifecycleCommand(t *testing.T) {
 	}
 
 	// 5. Restart
-	stdout, stderr, err = runDemoctl(t, stateDir, "restart", name)
+	stdout, stderr, err = runIIABVM(t, stateDir, "restart", name)
 	if err != nil {
 		t.Fatalf("restart failed: %s %s", stdout, stderr)
 	}
@@ -71,7 +71,7 @@ func TestLifecycleCommand(t *testing.T) {
 	time.Sleep(1 * time.Second)
 
 	// 6. Stop
-	stdout, stderr, err = runDemoctl(t, stateDir, "stop", name)
+	stdout, stderr, err = runIIABVM(t, stateDir, "stop", name)
 	if err != nil {
 		t.Fatalf("stop failed: %s %s", stdout, stderr)
 	}
@@ -80,7 +80,7 @@ func TestLifecycleCommand(t *testing.T) {
 	time.Sleep(1 * time.Second)
 
 	// 7. Status check
-	stdout, _, err = runDemoctl(t, stateDir, "status", name, "--toml")
+	stdout, _, err = runIIABVM(t, stateDir, "status", name, "--toml")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -92,13 +92,13 @@ func TestLifecycleCommand(t *testing.T) {
 	}
 
 	// 8. Delete
-	stdout, stderr, err = runDemoctl(t, stateDir, "delete", name)
+	stdout, stderr, err = runIIABVM(t, stateDir, "delete", name)
 	if err != nil {
 		t.Fatalf("delete failed: %s %s", stdout, stderr)
 	}
 
 	// 9. List
-	stdout, _, err = runDemoctl(t, stateDir, "list", "--toml")
+	stdout, _, err = runIIABVM(t, stateDir, "list", "--toml")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestLifecycleCommand(t *testing.T) {
 	}
 
 	// 10. Status check (should fail)
-	_, _, err = runDemoctl(t, stateDir, "status", name)
+	_, _, err = runIIABVM(t, stateDir, "status", name)
 	if err == nil {
 		t.Errorf("expected error for status of deleted demo")
 	}

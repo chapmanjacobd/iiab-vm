@@ -13,7 +13,7 @@ import (
 
 func checkDemoListEmpty(t *testing.T, stateDir string) {
 	t.Helper()
-	stdout, _, err := runDemoctl(t, stateDir, "list", "--toml")
+	stdout, _, err := runIIABVM(t, stateDir, "list", "--toml")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -28,7 +28,7 @@ func checkDemoListEmpty(t *testing.T, stateDir string) {
 
 func checkDemoListHelp(t *testing.T) {
 	t.Helper()
-	stdout, _, err := runDemoctl(t, "", "list", "--help")
+	stdout, _, err := runIIABVM(t, "", "list", "--help")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -39,7 +39,7 @@ func checkDemoListHelp(t *testing.T) {
 
 func checkDemoStatus(t *testing.T, stateDir, name string, expectedStatuses []string) statusOutput {
 	t.Helper()
-	stdout, _, err := runDemoctl(t, stateDir, "status", name, "--toml")
+	stdout, _, err := runIIABVM(t, stateDir, "status", name, "--toml")
 	if err != nil {
 		t.Fatalf("status failed: %v", err)
 	}
@@ -59,7 +59,7 @@ func checkDemoStatus(t *testing.T, stateDir, name string, expectedStatuses []str
 
 func checkDemoStatusNotFound(t *testing.T, stateDir string) {
 	t.Helper()
-	_, stderr, err := runDemoctl(t, stateDir, "status", "nonexistent")
+	_, stderr, err := runIIABVM(t, stateDir, "status", "nonexistent")
 	if err == nil {
 		t.Fatalf("expected error for nonexistent demo")
 	}
@@ -70,7 +70,7 @@ func checkDemoStatusNotFound(t *testing.T, stateDir string) {
 
 func checkDemoListHasDemo(t *testing.T, stateDir, name string) {
 	t.Helper()
-	stdout, _, err := runDemoctl(t, stateDir, "list", "--toml")
+	stdout, _, err := runIIABVM(t, stateDir, "list", "--toml")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -113,13 +113,13 @@ func TestIntegration_BuildStatusListReload(t *testing.T) {
 
 	// --- Build a shared demo ---
 	name := uniqueDemoName("integration-demo")
-	_, _, err := runDemoctl(t, stateDir, "build", name, "--skip-install")
+	_, _, err := runIIABVM(t, stateDir, "build", name, "--skip-install")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	// Cleanup on exit
-	defer runDemoctl(t, stateDir, "delete", name)
+	defer runIIABVM(t, stateDir, "delete", name)
 
 	// Wait for build to settle
 	if settleErr := waitDemoSettled(t, stateDir, name, 120*time.Second); settleErr != nil {
@@ -136,12 +136,12 @@ func TestIntegration_BuildStatusListReload(t *testing.T) {
 	checkDemoListHasDemo(t, stateDir, name)
 
 	// --- TestReload ---
-	_, _, err = runDemoctl(t, stateDir, "start", name)
+	_, _, err = runIIABVM(t, stateDir, "start", name)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	_, _, err = runDemoctl(t, stateDir, "reload")
+	_, _, err = runIIABVM(t, stateDir, "reload")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestIntegration_BuildStatusListReload(t *testing.T) {
 	checkNginxConfig(t, stateDir, name)
 
 	// --- TestRebuild ---
-	stdout, stderr, err := runDemoctl(t, stateDir, "rebuild", name)
+	stdout, stderr, err := runIIABVM(t, stateDir, "rebuild", name)
 	if err != nil {
 		t.Fatalf("rebuild failed: %s %s", stdout, stderr)
 	}

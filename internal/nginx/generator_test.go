@@ -1,14 +1,16 @@
-package nginx
+package nginx_test
 
 import (
 	"strings"
 	"testing"
+
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/nginx"
 )
 
 func TestRenderConfigFallbackWhenNoDemos(t *testing.T) {
-	rendered, err := renderConfig(nil, nil)
+	rendered, err := nginx.RenderConfig(nil, nil)
 	if err != nil {
-		t.Fatalf("renderConfig returned error: %v", err)
+		t.Fatalf("RenderConfig returned error: %v", err)
 	}
 
 	if !strings.Contains(rendered, "listen 80 default_server") {
@@ -23,14 +25,14 @@ func TestRenderConfigFallbackWhenNoDemos(t *testing.T) {
 }
 
 func TestRenderConfigForwardsHTTPRequestsToDemoUpstream(t *testing.T) {
-	rendered, err := renderConfig([]DemoEntry{{
+	rendered, err := nginx.RenderConfig([]nginx.DemoEntry{{
 		Name:      "demo-1",
 		Subdomain: "demo-1",
 		IP:        "10.0.3.2",
 		Port:      "80",
 	}}, nil)
 	if err != nil {
-		t.Fatalf("renderConfig returned error: %v", err)
+		t.Fatalf("RenderConfig returned error: %v", err)
 	}
 
 	assertContainsAll(t, rendered,
@@ -50,7 +52,7 @@ func TestRenderConfigForwardsHTTPRequestsToDemoUpstream(t *testing.T) {
 }
 
 func TestRenderConfigRedirectsHTTPAndForwardsHTTPSForSSLDemo(t *testing.T) {
-	rendered, err := renderConfig([]DemoEntry{{
+	rendered, err := nginx.RenderConfig([]nginx.DemoEntry{{
 		Name:      "secure-demo",
 		Subdomain: "secure-demo",
 		IP:        "10.0.3.9",
@@ -58,7 +60,7 @@ func TestRenderConfigRedirectsHTTPAndForwardsHTTPSForSSLDemo(t *testing.T) {
 		HasSSL:    true,
 	}}, nil)
 	if err != nil {
-		t.Fatalf("renderConfig returned error: %v", err)
+		t.Fatalf("RenderConfig returned error: %v", err)
 	}
 
 	assertContainsAll(t, rendered,
@@ -79,7 +81,7 @@ func TestRenderConfigRedirectsHTTPAndForwardsHTTPSForSSLDemo(t *testing.T) {
 }
 
 func TestRenderConfigAddsWildcardFallbackRedirectWhenWildcardHasSSL(t *testing.T) {
-	wildcard := DemoEntry{
+	wildcard := nginx.DemoEntry{
 		Name:      "wildcard-demo",
 		Subdomain: "wildcard-demo",
 		IP:        "10.0.3.7",
@@ -88,9 +90,9 @@ func TestRenderConfigAddsWildcardFallbackRedirectWhenWildcardHasSSL(t *testing.T
 		Wildcard:  true,
 	}
 
-	rendered, err := renderConfig([]DemoEntry{wildcard}, &wildcard)
+	rendered, err := nginx.RenderConfig([]nginx.DemoEntry{wildcard}, &wildcard)
 	if err != nil {
-		t.Fatalf("renderConfig returned error: %v", err)
+		t.Fatalf("RenderConfig returned error: %v", err)
 	}
 
 	assertContainsAll(t, rendered,

@@ -1,4 +1,4 @@
-// Package cmd defines all democtl CLI commands using Kong.
+// Package cmd defines all iiab-vm CLI commands using Kong.
 package cmd
 
 import (
@@ -15,43 +15,51 @@ import (
 
 	"github.com/alecthomas/kong"
 
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/config"
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/lock"
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/logging"
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/network"
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/nginx"
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/state"
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/sys"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/config"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/lock"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/logging"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/network"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/nginx"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/state"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/sys"
 )
 
 // getVersion returns the version of the binary from build info.
 func getVersion() string {
-	if info, ok := debug.ReadBuildInfo(); ok {
-		if info.Main.Version != "" && info.Main.Version != "(devel)" {
-			return info.Main.Version
-		}
-		// If (devel), try to find the git hash in build settings
-		var revision string
-		var dirty bool
-		for _, setting := range info.Settings {
-			switch setting.Key {
-			case "vcs.revision":
-				revision = setting.Value
-			case "vcs.modified":
-				dirty = setting.Value == "true"
-			}
-		}
-		if revision != "" {
-			if len(revision) > 7 {
-				revision = revision[:7]
-			}
-			if dirty {
-				revision += "-dirty"
-			}
-			return "v2-devel-" + revision
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "v2"
+	}
+
+	if info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return info.Main.Version
+	}
+
+	// If (devel), try to find the git hash in build settings
+	revision, dirty := getVCSSettings(info.Settings)
+	if revision == "" {
+		return "v2"
+	}
+
+	if len(revision) > 7 {
+		revision = revision[:7]
+	}
+	if dirty {
+		revision += "-dirty"
+	}
+	return "v2-devel-" + revision
+}
+
+func getVCSSettings(settings []debug.BuildSetting) (revision string, dirty bool) {
+	for _, setting := range settings {
+		switch setting.Key {
+		case "vcs.revision":
+			revision = setting.Value
+		case "vcs.modified":
+			dirty = setting.Value == "true"
 		}
 	}
-	return "v2" // Fallback to v2 as indicated by current tags
+	return revision, dirty
 }
 
 // CLI is the root Kong command structure.
@@ -106,7 +114,7 @@ func Run(ctx context.Context) int {
 	version := getVersion()
 
 	parser := kong.Must(&cli,
-		kong.Name("democtl"),
+		kong.Name("iiab-vm"),
 		kong.Description("Manage IIAB whitelabel demo containers."),
 		kong.UsageOnError(),
 		kong.ConfigureHelp(kong.HelpOptions{
@@ -132,10 +140,10 @@ func Run(ctx context.Context) int {
 	return 0
 }
 
-// configureLogging sets up slog based on DEMOCTL_VERBOSE environment variable.
+// configureLogging sets up slog based on IIAB_VM_VERBOSE environment variable.
 // Levels: "debug" or "1" for DEBUG, "2" for TRACE-level detail.
 func configureLogging() {
-	verbose := os.Getenv("DEMOCTL_VERBOSE")
+	verbose := os.Getenv("IIAB_VM_VERBOSE")
 	if verbose == "" {
 		verbose = os.Getenv("IIAB_VERBOSE")
 	}
@@ -186,7 +194,7 @@ func ensureRoot() error {
 
 // acquireLongLock acquires the global flock with a long timeout (for critical sections).
 func acquireLongLock(ctx context.Context, globals *GlobalOptions) (*lock.Lock, error) {
-	lockFile := filepath.Join(globals.StateDir, ".democtl.lock")
+	lockFile := filepath.Join(globals.StateDir, ".iiab-vm.lock")
 	return lock.AcquireLong(ctx, lockFile)
 }
 

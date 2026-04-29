@@ -11,7 +11,7 @@ const (
 	ResourceFileName = "resources"
 
 	// LockFileName is the default lock file name.
-	LockFileName = ".democtl.lock"
+	LockFileName = ".iiab-vm.lock"
 
 	// IIABBridge is the bridge name for IIAB demos.
 	IIABBridge     = "iiab-br0"

@@ -16,25 +16,25 @@ func TestCrossStorageCopy(t *testing.T) {
 	diskDemo := uniqueDemoName("disk-derived")
 
 	// Ensure clean slate for storage
-	_, stderr, err := runDemoctl(t, stateDir, "cleanup", "--all")
+	_, stderr, err := runIIABVM(t, stateDir, "cleanup", "--all")
 	if err != nil {
 		t.Fatalf("initial cleanup failed: %s", stderr)
 	}
 
 	// 1. Build in RAM (default) with skip-install
 	t.Log("Building base demo in RAM...")
-	stdout, stderr, err := runDemoctl(t, stateDir, "build", ramDemo, "--skip-install")
+	stdout, stderr, err := runIIABVM(t, stateDir, "build", ramDemo, "--skip-install")
 	if err != nil {
 		t.Fatalf("RAM build failed: %s %s", stdout, stderr)
 	}
 
 	// Cleanup storage on exit (btrfs subvolumes are global, not under state-dir)
-	defer runDemoctl(t, stateDir, "delete", diskDemo)
-	defer runDemoctl(t, stateDir, "delete", ramDemo)
+	defer runIIABVM(t, stateDir, "delete", diskDemo)
+	defer runIIABVM(t, stateDir, "delete", ramDemo)
 
 	// 2. Build on Disk using RAM demo as base
 	t.Log("Building derived demo on DISK...")
-	stdout, stderr, err = runDemoctl(
+	stdout, stderr, err = runIIABVM(
 		t,
 		stateDir,
 		"build",

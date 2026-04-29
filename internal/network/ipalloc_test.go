@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/lock"
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/network"
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/state"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/lock"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/network"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/state"
 )
 
 func TestIPAllocationUniqueness(t *testing.T) {
@@ -74,7 +74,7 @@ func TestConcurrentIPAllocationUnderLock(t *testing.T) {
 	tmpDir := t.TempDir()
 	activeDir := state.ActiveDir(tmpDir)
 	os.MkdirAll(activeDir, 0o755)
-	lockFile := filepath.Join(tmpDir, ".democtl.lock")
+	lockFile := filepath.Join(tmpDir, ".iiab-vm.lock")
 
 	lk, err := lock.AcquireShort(context.Background(), lockFile)
 	if err != nil {

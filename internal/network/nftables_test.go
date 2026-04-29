@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/network"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/network"
 )
 
 func TestSetupNATTempFileCreation(t *testing.T) {

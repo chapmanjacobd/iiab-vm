@@ -40,10 +40,10 @@ jobs:
         with:
           go-version-file: 'go.mod'
           check-latest: true
-      - name: Build democtl
+      - name: Build iiab-vm
         run: make build
       - name: Initialize host
-        run: sudo ./democtl init
+        run: sudo ./iiab-vm init
       - name: Run integration tests
         run: make integration
 
@@ -58,22 +58,22 @@ jobs:
           go-version-file: 'go.mod'
           check-latest: true
 
-      - name: Build democtl
+      - name: Build iiab-vm
         run: make build
 
       - name: Initialize host
-        run: sudo ./democtl init
+        run: sudo ./iiab-vm init
 
       - name: Build unittest demo
         run: |
-          sudo ./democtl build unittest --start \
+          sudo ./iiab-vm build unittest --start \
             --size 4000 \
             --local-vars vars/local_vars_unittest.yml
 
       - name: Verify build
         run: |
-          sudo ./democtl list
-          sudo ./democtl status unittest
+          sudo ./iiab-vm list
+          sudo ./iiab-vm status unittest
           # Check if the build subvolume exists
           sudo ls -ld /var/lib/machines/unittest
           sudo test -d /var/lib/machines/unittest
@@ -128,7 +128,7 @@ jobs:
             ls -lh /var/iiab-demos/storage.btrfs 2>/dev/null || echo "No disk btrfs file"
             losetup -l 2>&1 || true
             echo "=== Diagnostic: Container status ==="
-            sudo ./democtl status unittest 2>&1 || true
+            sudo ./iiab-vm status unittest 2>&1 || true
             echo "=== Diagnostic: Container interface state (host side) ==="
             ip addr show vb-unittest 2>&1 || true
             ip link show vb-unittest 2>&1 || true

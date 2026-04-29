@@ -11,14 +11,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/build"
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/config"
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/lock"
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/logging"
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/network"
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/state"
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/storage"
-	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/sys"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/build"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/config"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/lock"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/logging"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/network"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/state"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/storage"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/sys"
 )
 
 // RAMSafetyBufferMB is the amount of RAM to keep free for the host system (2GB).
@@ -149,7 +149,7 @@ func (c *BuildCmd) checkExisting(ctx context.Context, globals *GlobalOptions, de
 		return cleanupFailedBuild(ctx, globals, c.Name)
 	default:
 		return fmt.Errorf(
-			"demo '%s' already exists (status: %s). Use 'democtl rebuild' to recreate",
+			"demo '%s' already exists (status: %s). Use 'iiab-vm rebuild' to recreate",
 			c.Name,
 			status,
 		)
@@ -296,7 +296,7 @@ func setupBuildLogging(stateDir, name string) (io.Writer, *os.File, error) {
 	multiWriter := io.MultiWriter(os.Stderr, logFile)
 
 	// Configure logger to write to both
-	verbose := os.Getenv("DEMOCTL_VERBOSE")
+	verbose := os.Getenv("IIAB_VM_VERBOSE")
 	if verbose == "" {
 		verbose = os.Getenv("IIAB_VERBOSE")
 	}

@@ -28,19 +28,19 @@ func NewSystem() *System {
 		NspawnDir:         "/etc/systemd/nspawn",
 	}
 
-	if val := os.Getenv("DEMOCTL_SYSTEMD_NETWORK_DIR"); val != "" {
+	if val := os.Getenv("IIAB_VM_SYSTEMD_NETWORK_DIR"); val != "" {
 		s.SystemdNetworkDir = val
 	}
-	if val := os.Getenv("DEMOCTL_NFTABLES_CONF"); val != "" {
+	if val := os.Getenv("IIAB_VM_NFTABLES_CONF"); val != "" {
 		s.NftablesConf = val
 	}
-	if val := os.Getenv("DEMOCTL_NFTABLES_DIR"); val != "" {
+	if val := os.Getenv("IIAB_VM_NFTABLES_DIR"); val != "" {
 		s.NftablesDir = val
 	}
-	if val := os.Getenv("DEMOCTL_MACHINES_DIR"); val != "" {
+	if val := os.Getenv("IIAB_VM_MACHINES_DIR"); val != "" {
 		s.MachinesDir = val
 	}
-	if val := os.Getenv("DEMOCTL_NSPAWN_DIR"); val != "" {
+	if val := os.Getenv("IIAB_VM_NSPAWN_DIR"); val != "" {
 		s.NspawnDir = val
 	}
 

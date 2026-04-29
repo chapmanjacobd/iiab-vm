@@ -25,7 +25,7 @@ formatters:
       sections:
         - standard
         - default
-        - prefix(github.com/chapmanjacobd/iiab-whitelabel)
+        - prefix(github.com/chapmanjacobd/iiab-vm)
       custom-order: true
 
     gofumpt:
@@ -36,7 +36,7 @@ formatters:
       # with the given prefixes are grouped after 3rd-party packages.
       # Default: []
       local-prefixes:
-        - github.com/chapmanjacobd/iiab-whitelabel
+        - github.com/chapmanjacobd/iiab-vm
 
     golines:
       # Target maximum line length.
