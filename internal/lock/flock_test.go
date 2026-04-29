@@ -8,7 +8,7 @@ import (
 
 	"github.com/gofrs/flock"
 
-	"github.com/chapmanjacobd/iiab-whitelabel/internal/lock"
+	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/lock"
 )
 
 func init() {

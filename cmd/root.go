@@ -9,23 +9,56 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"time"
 
 	"github.com/alecthomas/kong"
 
-	"github.com/chapmanjacobd/iiab-whitelabel/internal/config"
-	"github.com/chapmanjacobd/iiab-whitelabel/internal/lock"
-	"github.com/chapmanjacobd/iiab-whitelabel/internal/logging"
-	"github.com/chapmanjacobd/iiab-whitelabel/internal/network"
-	"github.com/chapmanjacobd/iiab-whitelabel/internal/nginx"
-	"github.com/chapmanjacobd/iiab-whitelabel/internal/state"
-	"github.com/chapmanjacobd/iiab-whitelabel/internal/sys"
+	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/config"
+	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/lock"
+	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/logging"
+	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/network"
+	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/nginx"
+	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/state"
+	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/sys"
 )
+
+// getVersion returns the version of the binary from build info.
+func getVersion() string {
+	if info, ok := debug.ReadBuildInfo(); ok {
+		if info.Main.Version != "" && info.Main.Version != "(devel)" {
+			return info.Main.Version
+		}
+		// If (devel), try to find the git hash in build settings
+		var revision string
+		var dirty bool
+		for _, setting := range info.Settings {
+			switch setting.Key {
+			case "vcs.revision":
+				revision = setting.Value
+			case "vcs.modified":
+				dirty = setting.Value == "true"
+			}
+		}
+		if revision != "" {
+			if len(revision) > 7 {
+				revision = revision[:7]
+			}
+			if dirty {
+				revision += "-dirty"
+			}
+			return "v2-devel-" + revision
+		}
+	}
+	return "v2" // Fallback to v2 as indicated by current tags
+}
 
 // CLI is the root Kong command structure.
 type CLI struct {
 	GlobalOptions
+
+	VersionFlag kong.VersionFlag `help:"Print version information and quit" short:"V" name:"version"`
 
 	Init      InitCmd      `help:"Initialize host for IIAB demos"                 cmd:""`
 	Build     BuildCmd     `help:"Build a new demo"                               cmd:""`
@@ -43,6 +76,14 @@ type CLI struct {
 	Reload    ReloadCmd    `help:"Regenerate nginx config from active demos"      cmd:""`
 	Reconcile ReconcileCmd `help:"Fix resource counter drift and check ghost IPs" cmd:""`
 	Certs     CertsCmd     `help:"Manage TLS certificates for demos"              cmd:""`
+	Version   VersionCmd   `help:"Print version information"                      cmd:""`
+}
+
+type VersionCmd struct{}
+
+func (v *VersionCmd) Run() error {
+	fmt.Println(getVersion())
+	return nil
 }
 
 // GlobalOptions holds the parsed Kong context and shared state.
@@ -62,6 +103,8 @@ func Run(ctx context.Context) int {
 		},
 	}
 
+	version := getVersion()
+
 	parser := kong.Must(&cli,
 		kong.Name("democtl"),
 		kong.Description("Manage IIAB whitelabel demo containers."),
@@ -70,6 +113,9 @@ func Run(ctx context.Context) int {
 			Compact: true,
 			Summary: true,
 		}),
+		kong.Vars{
+			"version": version,
+		},
 		kong.BindTo(ctx, (*context.Context)(nil)),
 	)
 

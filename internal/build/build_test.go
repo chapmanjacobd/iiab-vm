@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/chapmanjacobd/iiab-whitelabel/internal/build"
+	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/build"
 )
 
 func TestGenerateNspawnContent(t *testing.T) {

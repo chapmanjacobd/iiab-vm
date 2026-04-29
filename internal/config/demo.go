@@ -11,7 +11,7 @@ import (
 
 	"github.com/pelletier/go-toml/v2"
 
-	"github.com/chapmanjacobd/iiab-whitelabel/internal/state"
+	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/state"
 )
 
 // Demo represents a demo's configuration as stored in its config file.

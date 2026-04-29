@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chapmanjacobd/iiab-whitelabel/internal/command"
-	"github.com/chapmanjacobd/iiab-whitelabel/internal/config"
-	"github.com/chapmanjacobd/iiab-whitelabel/internal/state"
-	"github.com/chapmanjacobd/iiab-whitelabel/internal/storage"
+	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/command"
+	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/config"
+	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/state"
+	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/storage"
 )
 
 // ensureBaseSubvolume creates or copies the base-debian subvolume.

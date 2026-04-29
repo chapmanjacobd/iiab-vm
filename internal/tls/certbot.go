@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chapmanjacobd/iiab-whitelabel/internal/config"
-	"github.com/chapmanjacobd/iiab-whitelabel/internal/nginx"
-	"github.com/chapmanjacobd/iiab-whitelabel/internal/state"
+	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/config"
+	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/nginx"
+	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/state"
 )
 
 const (

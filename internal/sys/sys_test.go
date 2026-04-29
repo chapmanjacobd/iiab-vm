@@ -6,8 +6,8 @@ import (
 	"os/exec"
 	"testing"
 
-	"github.com/chapmanjacobd/iiab-whitelabel/internal/state"
-	"github.com/chapmanjacobd/iiab-whitelabel/internal/sys"
+	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/state"
+	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/sys"
 )
 
 func TestGetDiskTotalMBFromResourceFile(t *testing.T) {

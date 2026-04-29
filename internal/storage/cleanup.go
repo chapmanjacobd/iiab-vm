@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/chapmanjacobd/iiab-whitelabel/internal/config"
+	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/config"
 )
 
 // CleanupResources removes container, veth, and subvolume resources.

@@ -1,4 +1,4 @@
-module github.com/chapmanjacobd/iiab-whitelabel
+module github.com/chapmanjacobd/iiab-whitelabel/v2
 
 go 1.25.0
 

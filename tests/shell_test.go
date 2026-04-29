@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chapmanjacobd/iiab-whitelabel/internal/build"
+	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/build"
 )
 
 func TestShellCommand(t *testing.T) {

@@ -3,7 +3,7 @@ package state_test
 import (
 	"testing"
 
-	"github.com/chapmanjacobd/iiab-whitelabel/internal/state"
+	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/state"
 )
 
 func TestSubdomainSanitization(t *testing.T) {

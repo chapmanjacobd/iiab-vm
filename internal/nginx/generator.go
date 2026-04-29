@@ -12,10 +12,10 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/chapmanjacobd/iiab-whitelabel/internal/config"
-	"github.com/chapmanjacobd/iiab-whitelabel/internal/lock"
-	"github.com/chapmanjacobd/iiab-whitelabel/internal/network"
-	"github.com/chapmanjacobd/iiab-whitelabel/internal/state"
+	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/config"
+	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/lock"
+	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/network"
+	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/state"
 )
 
 const (

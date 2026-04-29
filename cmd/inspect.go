@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chapmanjacobd/iiab-whitelabel/internal/config"
-	"github.com/chapmanjacobd/iiab-whitelabel/internal/state"
-	"github.com/chapmanjacobd/iiab-whitelabel/internal/storage"
-	"github.com/chapmanjacobd/iiab-whitelabel/internal/sys"
+	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/config"
+	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/state"
+	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/storage"
+	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/sys"
 )
 
 // ListCmd shows all demos and resource usage.

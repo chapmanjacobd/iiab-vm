@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chapmanjacobd/iiab-whitelabel/internal/command"
-	"github.com/chapmanjacobd/iiab-whitelabel/internal/network"
-	"github.com/chapmanjacobd/iiab-whitelabel/internal/nginx"
-	"github.com/chapmanjacobd/iiab-whitelabel/internal/state"
+	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/command"
+	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/network"
+	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/nginx"
+	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/state"
 )
 
 // InitCmd initializes the host for IIAB demos.

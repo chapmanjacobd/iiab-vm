@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chapmanjacobd/iiab-whitelabel/internal/config"
+	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/config"
 )
 
 func TestReconcileCommand(t *testing.T) {

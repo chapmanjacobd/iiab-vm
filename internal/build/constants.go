@@ -3,7 +3,7 @@ package build
 import (
 	"time"
 
-	"github.com/chapmanjacobd/iiab-whitelabel/internal/network"
+	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/network"
 )
 
 const (

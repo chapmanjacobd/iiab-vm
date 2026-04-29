@@ -10,6 +10,12 @@ This system manages the full lifecycle of IIAB demo instances on a Debian 13 hos
 sudo make small-medium-large
 ```
 
+### Install directly, without `git clone`
+
+```sh
+go install github.com/chapmanjacobd/iiab-whitelabel/v2@latest
+```
+
 ## The `democtl` CLI
 
 The `democtl` tool is the primary interface for managing demos.

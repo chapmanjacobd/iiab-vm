@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chapmanjacobd/iiab-whitelabel/internal/command"
-	"github.com/chapmanjacobd/iiab-whitelabel/internal/state"
-	"github.com/chapmanjacobd/iiab-whitelabel/internal/sys"
+	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/command"
+	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/state"
+	"github.com/chapmanjacobd/iiab-whitelabel/v2/internal/sys"
 )
 
 const (
