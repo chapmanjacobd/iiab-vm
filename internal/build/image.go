@@ -283,32 +283,20 @@ func downloadAndExtractDebian(ctx context.Context, info *storage.StorageInfo) er
 
 // downloadAndExtractUbuntu downloads and extracts the Ubuntu cloud image.
 func downloadAndExtractUbuntu(ctx context.Context, info *storage.StorageInfo, baseSubvol string) error {
-	// Download image into a temp dir
+	// Download rootfs tarball into a temp dir
 	tmpdir, mkdirErr := os.MkdirTemp(info.Mount, "ubuntu-base.*")
 	if mkdirErr != nil {
 		return mkdirErr
 	}
 	defer os.RemoveAll(tmpdir)
 
-	// Download image
-	imgFile := filepath.Join(tmpdir, "ubuntu.img")
-	if err := command.Run(ctx, "curl", "-fL", "-o", imgFile, UbuntuTarURL); err != nil {
-		return fmt.Errorf("cannot download Ubuntu image: %w", err)
+	// Download tarball
+	tarFile := filepath.Join(tmpdir, "ubuntu-root.tar.xz")
+	if err := command.Run(ctx, "curl", "-fL", "-o", tarFile, UbuntuTarURL); err != nil {
+		return fmt.Errorf("cannot download Ubuntu rootfs: %w", err)
 	}
 
-	slog.InfoContext(ctx, "Found disk image", "path", imgFile)
-
-	// Use systemd-dissect to mount and extract root filesystem
-	extractDir, err := os.MkdirTemp(info.Mount, "ubuntu-extract.*")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(extractDir)
-
-	if err := command.Run(ctx, "systemd-dissect", "--mount", "--mkdir", imgFile, extractDir); err != nil {
-		return fmt.Errorf("systemd-dissect mount failed: %w", err)
-	}
-	defer func() { _ = command.Run(ctx, "systemd-dissect", "--umount", extractDir) }()
+	slog.InfoContext(ctx, "Downloaded Ubuntu rootfs", "path", tarFile)
 
 	// Create base subvolume and copy
 	if err := storage.CreateSubvolume(ctx, info.Mount, baseSubvol); err != nil {
@@ -316,8 +304,8 @@ func downloadAndExtractUbuntu(ctx context.Context, info *storage.StorageInfo, ba
 	}
 
 	basePath := filepath.Join(info.Mount, baseSubvol)
-	if err := command.Run(ctx, "cp", "-a", "--reflink=auto", extractDir+"/.", basePath+"/"); err != nil {
-		return err
+	if err := command.Run(ctx, "tar", "-xJf", tarFile, "-C", basePath); err != nil {
+		return fmt.Errorf("cannot extract Ubuntu rootfs tar: %w", err)
 	}
 
 	// Clean up machine-id and hostname
