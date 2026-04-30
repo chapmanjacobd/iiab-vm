@@ -68,35 +68,69 @@ func (c *CleanupCmd) Run(ctx context.Context, globals *GlobalOptions) error {
 	return nil
 }
 
-// cleanupAggressive unmounts all iiab storage and deletes the backing btrfs files.
-// It refuses to run if any demo is currently running.
-func cleanupAggressive(ctx context.Context, stateDir string, sys *config.System) error {
-	slog.InfoContext(ctx, "Performing aggressive cleanup...")
+// cleanupAggressive unmounts specified iiab storage and deletes the backing btrfs files.
+// It refuses to run if any demo is currently running (optionally filtered by prefix).
+func cleanupAggressive(
+	ctx context.Context,
+	stateDir string,
+	sys *config.System,
+	disk, ram bool,
+	prefixes []string,
+) error {
+	slog.InfoContext(ctx, "Performing aggressive cleanup...", "disk", disk, "ram", ram, "prefixes", prefixes)
 
-	// Refuse if any demo is running
+	// Refuse if any demo is running (respecting prefixes)
 	names, err := config.List(stateDir)
 	if err != nil {
 		return fmt.Errorf("cannot list demos: %w", err)
 	}
 	for _, name := range names {
-		status, _ := config.GetDemoStatus(stateDir, name)
-		if status == "running" {
-			return fmt.Errorf("cannot perform aggressive cleanup: demo '%s' is running (stop all demos first)", name)
+		match := false
+		if len(prefixes) == 0 {
+			match = true
+		} else {
+			for _, p := range prefixes {
+				if strings.HasPrefix(name, p) {
+					match = true
+					break
+				}
+			}
+		}
+
+		if match {
+			status, _ := config.GetDemoStatus(stateDir, name)
+			if status == "running" {
+				return fmt.Errorf(
+					"cannot perform aggressive cleanup: demo '%s' is running (stop all matching demos first)",
+					name,
+				)
+			}
 		}
 	}
 
-	terminateAllMachines(ctx)
-	unmountAllStorage(ctx)
-	detachAllLoopDevices(ctx)
-	removeBridge(ctx)
-	cleanOrphanedMachineSymlinks(sys)
-	cleanupEmptyDirs()
+	terminateAllMachines(ctx, prefixes)
+
+	if disk || ram {
+		unmountAllStorage(ctx, disk, ram)
+		detachAllLoopDevices(ctx, disk, ram)
+	}
+
+	// Only remove host-wide resources on a full cleanup of all storage backends.
+	if len(prefixes) == 0 && disk && ram {
+		removeBridge(ctx)
+	}
+
+	cleanOrphanedMachineSymlinks(sys, prefixes)
+
+	if len(prefixes) == 0 {
+		cleanupEmptyDirs()
+	}
 
 	slog.InfoContext(ctx, "Aggressive cleanup complete")
 	return nil
 }
 
-func terminateAllMachines(ctx context.Context) {
+func terminateAllMachines(ctx context.Context, prefixes []string) {
 	tctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	out, err := exec.CommandContext(tctx, "machinectl", "list", "--no-legend").Output()
 	cancel()
@@ -110,21 +144,38 @@ func terminateAllMachines(ctx context.Context) {
 		fields := strings.Fields(line)
 		if len(fields) > 0 {
 			name := fields[0]
-			slog.InfoContext(ctx, "Terminating machine for aggressive cleanup", "name", name)
-			tctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-			_ = exec.CommandContext(tctx, "machinectl", "terminate", name).Run()
-			cancel()
+
+			match := false
+			if len(prefixes) == 0 {
+				match = true
+			} else {
+				for _, p := range prefixes {
+					if strings.HasPrefix(name, p) {
+						match = true
+						break
+					}
+				}
+			}
+
+			if match {
+				slog.InfoContext(ctx, "Terminating machine for aggressive cleanup", "name", name)
+				tctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+				_ = exec.CommandContext(tctx, "machinectl", "terminate", name).Run()
+				cancel()
+			}
 		}
 	}
 }
 
-func unmountAllStorage(ctx context.Context) {
-	mounts := []string{
-		"/run/iiab-demos/storage",
-		"/var/iiab-demos/storage",
-		"/run/iiab-demos/alt-ram-storage",
-		"/var/iiab-demos/alt-disk-storage",
+func unmountAllStorage(ctx context.Context, disk, ram bool) {
+	var mounts []string
+	if ram {
+		mounts = append(mounts, "/run/iiab-demos/storage", "/run/iiab-demos/alt-ram-storage")
 	}
+	if disk {
+		mounts = append(mounts, "/var/iiab-demos/storage", "/var/iiab-demos/alt-disk-storage")
+	}
+
 	for _, mount := range mounts {
 		for range 3 {
 			if !sys.Mountpoint(ctx, mount) {
@@ -139,11 +190,15 @@ func unmountAllStorage(ctx context.Context) {
 	}
 }
 
-func detachAllLoopDevices(ctx context.Context) {
-	files := []string{
-		"/run/iiab-demos/storage.btrfs",
-		"/var/iiab-demos/storage.btrfs",
+func detachAllLoopDevices(ctx context.Context, disk, ram bool) {
+	var files []string
+	if ram {
+		files = append(files, "/run/iiab-demos/storage.btrfs")
 	}
+	if disk {
+		files = append(files, "/var/iiab-demos/storage.btrfs")
+	}
+
 	for _, file := range files {
 		slog.InfoContext(ctx, "Detaching loop devices for file", "file", file)
 		tctx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -178,14 +233,31 @@ func removeBridge(ctx context.Context) {
 	bcancel()
 }
 
-func cleanOrphanedMachineSymlinks(sys *config.System) {
+func cleanOrphanedMachineSymlinks(sys *config.System, prefixes []string) {
 	entries, err := os.ReadDir(sys.MachinesDir)
 	if err != nil {
 		slog.Warn("Failed to read machines directory", "path", sys.MachinesDir, "error", err)
 		return
 	}
 	for _, e := range entries {
-		path := filepath.Join(sys.MachinesDir, e.Name())
+		name := e.Name()
+		match := false
+		if len(prefixes) == 0 {
+			match = true
+		} else {
+			for _, p := range prefixes {
+				if strings.HasPrefix(name, p) {
+					match = true
+					break
+				}
+			}
+		}
+
+		if !match {
+			continue
+		}
+
+		path := filepath.Join(sys.MachinesDir, name)
 		if info, statErr := os.Lstat(path); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
 			target, readErr := os.Readlink(path)
 			if readErr == nil &&

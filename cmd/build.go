@@ -16,6 +16,7 @@ import (
 	"github.com/chapmanjacobd/iiab-vm/v2/internal/lock"
 	"github.com/chapmanjacobd/iiab-vm/v2/internal/logging"
 	"github.com/chapmanjacobd/iiab-vm/v2/internal/network"
+	"github.com/chapmanjacobd/iiab-vm/v2/internal/nginx"
 	"github.com/chapmanjacobd/iiab-vm/v2/internal/state"
 	"github.com/chapmanjacobd/iiab-vm/v2/internal/storage"
 	"github.com/chapmanjacobd/iiab-vm/v2/internal/sys"
@@ -390,7 +391,8 @@ func (c *RebuildCmd) Run(ctx context.Context, globals *GlobalOptions) error {
 			slog.ErrorContext(ctx, "Rebuild failed", "demo", name, "error", err)
 		}
 	}
-	return nil
+
+	return nginx.Generate(ctx, globals.StateDir)
 }
 
 // rebuildAll handles the --all code path.
@@ -432,7 +434,7 @@ func (c *RebuildCmd) rebuildAll(ctx context.Context, globals *GlobalOptions) err
 			slog.InfoContext(ctx, "Rebuilt successfully", "demo", cfg.name)
 		}
 	}
-	return nil
+	return nginx.Generate(ctx, globals.StateDir)
 }
 
 type demoConfig struct {

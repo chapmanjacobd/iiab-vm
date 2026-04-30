@@ -68,23 +68,23 @@ type CLI struct {
 
 	VersionFlag kong.VersionFlag `help:"Print version information and quit" short:"V" name:"version"`
 
-	Init      InitCmd      `help:"Initialize host for IIAB demos"                 cmd:""`
-	Build     BuildCmd     `help:"Build a new demo"                               cmd:""`
+	Init      InitCmd      `help:"Initialize host for IIAB demos"                                 cmd:""`
+	Build     BuildCmd     `help:"Build a new demo"                                               cmd:""`
 	Delete    DeleteCmd    `help:"Stop and delete demo(s); --all also resets shared host storage" cmd:""`
-	List      ListCmd      `help:"Show all demos and resource usage"              cmd:""`
-	Status    StatusCmd    `help:"Detailed status of a demo"                      cmd:""`
-	Start     StartCmd     `help:"Start stopped demo(s)"                          cmd:""`
-	Stop      StopCmd      `help:"Stop a running demo(s)"                         cmd:""`
-	Restart   RestartCmd   `help:"Restart running demo(s)"                        cmd:""`
-	Settle    SettleCmd    `help:"Wait until all demos reach a settled state"     cmd:""`
-	Logs      LogsCmd      `help:"Show build log or container journal"            cmd:""`
-	Shell     ShellCmd     `help:"Open a shell in a running container"            cmd:""`
-	Cleanup   CleanupCmd   `help:"Clean up failed builds and orphaned resources"  cmd:""`
-	Rebuild   RebuildCmd   `help:"Delete and re-build demo(s)"                    cmd:""`
-	Reload    ReloadCmd    `help:"Regenerate nginx config from active demos"      cmd:""`
-	Reconcile ReconcileCmd `help:"Fix resource counter drift and check ghost IPs" cmd:""`
-	Certs     CertsCmd     `help:"Manage TLS certificates for demos"              cmd:""`
-	Version   VersionCmd   `help:"Print version information"                      cmd:""`
+	List      ListCmd      `help:"Show all demos and resource usage"                              cmd:""`
+	Status    StatusCmd    `help:"Detailed status of a demo"                                      cmd:""`
+	Start     StartCmd     `help:"Start stopped demo(s)"                                          cmd:""`
+	Stop      StopCmd      `help:"Stop a running demo(s)"                                         cmd:""`
+	Restart   RestartCmd   `help:"Restart running demo(s)"                                        cmd:""`
+	Settle    SettleCmd    `help:"Wait until all demos reach a settled state"                     cmd:""`
+	Logs      LogsCmd      `help:"Show build log or container journal"                            cmd:""`
+	Shell     ShellCmd     `help:"Open a shell in a running container"                            cmd:""`
+	Cleanup   CleanupCmd   `help:"Clean up failed builds and orphaned resources"                  cmd:""`
+	Rebuild   RebuildCmd   `help:"Delete and re-build demo(s)"                                    cmd:""`
+	Reload    ReloadCmd    `help:"Regenerate nginx config from active demos"                      cmd:""`
+	Reconcile ReconcileCmd `help:"Fix resource counter drift and check ghost IPs"                 cmd:""`
+	Certs     CertsCmd     `help:"Manage TLS certificates for demos"                              cmd:""`
+	Version   VersionCmd   `help:"Print version information"                                      cmd:""`
 }
 
 type VersionCmd struct{}
