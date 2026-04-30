@@ -209,6 +209,8 @@ Gateway=%s
 DHCP=no
 DNS=8.8.8.8
 DNS=1.1.1.1
+LLDP=no
+EmitLLDP=no
 `, ip, Gateway)
 
 	networkFile := filepath.Join(networkDir, "99-iiab-host0.network")

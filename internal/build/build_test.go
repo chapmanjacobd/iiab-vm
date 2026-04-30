@@ -346,6 +346,8 @@ Gateway=` + gateway + `
 DHCP=no
 DNS=8.8.8.8
 DNS=1.1.1.1
+LLDP=no
+EmitLLDP=no
 `
 
 	if !strings.Contains(networkContent, ip) {
@@ -359,6 +361,12 @@ DNS=1.1.1.1
 	}
 	if !strings.Contains(networkContent, "1.1.1.1") {
 		t.Error("expected network content to contain '1.1.1.1'")
+	}
+	if !strings.Contains(networkContent, "LLDP=no") {
+		t.Error("expected network content to disable LLDP")
+	}
+	if !strings.Contains(networkContent, "EmitLLDP=no") {
+		t.Error("expected network content to disable LLDP emission")
 	}
 }
 

@@ -27,6 +27,11 @@ const stepTimeout = 7200 * time.Second
 // runIIABInstaller runs the IIAB installer inside the container using a buffered
 // PTY expect loop for automated interaction with systemd-nspawn.
 func runIIABInstaller(buildCtx context.Context, buildSubvol string, cfg Config) error {
+	if cfg.SkipInstall {
+		slog.InfoContext(buildCtx, "Skipping build-time boot for skip-install image")
+		return nil
+	}
+
 	// Verify networking config exists
 	networkFile := filepath.Join(buildSubvol, "etc/systemd/network/99-iiab-host0.network")
 	if _, err := os.Stat(networkFile); err != nil {
