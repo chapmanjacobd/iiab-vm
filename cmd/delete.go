@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 
 	"github.com/chapmanjacobd/iiab-vm/v2/internal/config"
 	"github.com/chapmanjacobd/iiab-vm/v2/internal/lock"
@@ -31,148 +30,203 @@ func (c *DeleteCmd) Run(ctx context.Context, globals *GlobalOptions) error {
 		return err
 	}
 
-	if c.All && len(c.Names) == 0 && !c.Disk && !c.RAM {
-		lk, err := acquireLongLock(ctx, globals)
+	var lk *lock.Lock
+	if c.needsAggressiveCleanupLock() {
+		var err error
+		lk, err = acquireLongLock(ctx, globals)
 		if err != nil {
 			return err
 		}
+	}
+	if lk != nil {
 		defer func() { _ = lk.Release() }()
 	}
 
-	allNames, err := config.List(globals.StateDir)
+	toDelete, err := c.selectDeleteTargets(ctx, globals.StateDir)
 	if err != nil {
 		return err
 	}
 
-	var toDelete []string
-	if c.All {
-		// Treat c.Names as prefixes
-		for _, name := range allNames {
-			match := false
-			if len(c.Names) == 0 {
-				match = true
-			} else {
-				for _, prefix := range c.Names {
-					if strings.HasPrefix(name, prefix) {
-						match = true
-						break
-					}
-				}
-			}
-
-			if match {
-				toDelete = append(toDelete, name)
-			}
-		}
-	} else {
-		// Treat c.Names as exact matches
-		if len(c.Names) == 0 {
-			return errors.New("no demos specified. Use demo name(s) or --all")
-		}
-		for _, name := range c.Names {
-			found := slices.Contains(allNames, name)
-			if found {
-				toDelete = append(toDelete, name)
-			} else {
-				slog.WarnContext(ctx, "Demo not found", "name", name)
-			}
-		}
-	}
-
-	// Filter by storage type if requested
-	if c.Disk || c.RAM {
-		var filtered []string
-		for _, name := range toDelete {
-			demo, err := config.Read(ctx, globals.StateDir, name)
-			if err != nil {
-				slog.WarnContext(ctx, "Could not read config for filtering", "demo", name, "error", err)
-				continue
-			}
-			if (c.Disk && demo.BuildOnDisk) || (c.RAM && !demo.BuildOnDisk) {
-				filtered = append(filtered, name)
-			}
-		}
-		toDelete = filtered
-	}
-
 	if len(toDelete) == 0 {
-		if c.All {
-			slog.InfoContext(ctx, "No demos matched the filters")
-			// Even if no demos matched, we might still want aggressive cleanup if --all was unqualified
-			if len(c.Names) == 0 && !c.Disk && !c.RAM {
-				return cleanupAggressive(ctx, globals.StateDir, globals.System, true, true, nil)
-			}
-			return nil
+		return c.handleNoDeleteMatches(ctx, globals)
+	}
+
+	deleteErrs := deleteSelectedDemos(ctx, globals, toDelete)
+	nginxErr := reloadNginxAfterDelete(ctx, globals.StateDir)
+
+	if len(deleteErrs) > 0 {
+		return joinDeleteErrors(deleteErrs, nginxErr)
+	}
+
+	cleanupErr := c.runAggressiveCleanup(ctx, globals)
+	if nginxErr != nil && cleanupErr != nil {
+		return errors.Join(nginxErr, cleanupErr)
+	}
+	if cleanupErr != nil {
+		return cleanupErr
+	}
+	return nginxErr
+}
+
+func (c *DeleteCmd) needsAggressiveCleanupLock() bool {
+	return c.All
+}
+
+func (c *DeleteCmd) selectDeleteTargets(ctx context.Context, stateDir string) ([]string, error) {
+	allNames, err := config.List(stateDir)
+	if err != nil {
+		return nil, err
+	}
+
+	toDelete, err := c.matchDeleteTargets(ctx, allNames)
+	if err != nil {
+		return nil, err
+	}
+
+	return filterDeleteTargetsByStorage(ctx, stateDir, toDelete, c.Disk, c.RAM), nil
+}
+
+func (c *DeleteCmd) matchDeleteTargets(ctx context.Context, allNames []string) ([]string, error) {
+	if c.All {
+		return matchDeletePrefixes(allNames, c.Names), nil
+	}
+
+	if len(c.Names) == 0 {
+		return nil, errors.New("no demos specified. Use demo name(s) or --all")
+	}
+
+	return matchDeleteNames(ctx, allNames, c.Names), nil
+}
+
+func matchDeletePrefixes(allNames, prefixes []string) []string {
+	var matches []string
+	for _, name := range allNames {
+		if matchesAnyPrefix(name, prefixes) {
+			matches = append(matches, name)
 		}
+	}
+
+	return matches
+}
+
+func matchDeleteNames(ctx context.Context, allNames, names []string) []string {
+	var matches []string
+	for _, name := range names {
+		if slices.Contains(allNames, name) {
+			matches = append(matches, name)
+			continue
+		}
+
+		slog.WarnContext(ctx, "Demo not found", "name", name)
+	}
+
+	return matches
+}
+
+func filterDeleteTargetsByStorage(_ context.Context, _ string, names []string, disk, ram bool) []string {
+	if !disk && !ram {
+		return names
+	}
+
+	var filtered []string
+	for _, name := range names {
+		if shouldDeleteForStorage(detectDeleteStorageBackend(name), disk, ram) {
+			filtered = append(filtered, name)
+		}
+	}
+
+	return filtered
+}
+
+func detectDeleteStorageBackend(name string) bool {
+	return !hasRAMBuildPath(storage.RAMMount, name)
+}
+
+func hasRAMBuildPath(ramMount, name string) bool {
+	return state.FileExists(filepath.Join(ramMount, "builds", name))
+}
+
+func shouldDeleteForStorage(buildOnDisk, disk, ram bool) bool {
+	if !disk && !ram {
+		return true
+	}
+
+	return (disk && buildOnDisk) || (ram && !buildOnDisk)
+}
+
+func (c *DeleteCmd) handleNoDeleteMatches(ctx context.Context, globals *GlobalOptions) error {
+	if !c.All {
 		return errors.New("no demos found matching the specified names/filters")
 	}
 
+	slog.InfoContext(ctx, "No demos matched the filters")
+	opts, ok := c.aggressiveCleanupOptions(globals)
+	if !ok {
+		return nil
+	}
+
+	return cleanupAggressive(ctx, opts)
+}
+
+func deleteSelectedDemos(ctx context.Context, globals *GlobalOptions, names []string) []error {
 	var deleteErrs []error
-	for _, name := range toDelete {
+	for _, name := range names {
 		if err := deleteDemo(ctx, globals, name); err != nil {
 			slog.ErrorContext(ctx, "Delete failed", "demo", name, "error", err)
 			deleteErrs = append(deleteErrs, fmt.Errorf("delete %s: %w", name, err))
-		} else {
-			slog.InfoContext(ctx, "Deleted", "demo", name)
+			continue
 		}
+
+		slog.InfoContext(ctx, "Deleted", "demo", name)
 	}
 
-	var nginxErr error
-	// Reload nginx once after all deletions
-	if err := nginx.Generate(ctx, globals.StateDir); err != nil {
-		nginxErr = fmt.Errorf("nginx reload: %w", err)
+	return deleteErrs
+}
+
+func reloadNginxAfterDelete(ctx context.Context, stateDir string) error {
+	if err := nginx.Generate(ctx, stateDir); err != nil {
 		slog.ErrorContext(ctx, "Nginx reload failed", "error", err)
+		return fmt.Errorf("nginx reload: %w", err)
 	}
 
-	if len(deleteErrs) > 0 {
-		if nginxErr != nil {
-			deleteErrs = append(deleteErrs, nginxErr)
-		}
-		return errors.Join(deleteErrs...)
+	return nil
+}
+
+func joinDeleteErrors(deleteErrs []error, nginxErr error) error {
+	if nginxErr != nil {
+		deleteErrs = append(deleteErrs, nginxErr)
+	}
+	return errors.Join(deleteErrs...)
+}
+
+func (c *DeleteCmd) runAggressiveCleanup(ctx context.Context, globals *GlobalOptions) error {
+	opts, ok := c.aggressiveCleanupOptions(globals)
+	if !ok {
+		return nil
 	}
 
-	if c.All {
-		// Only perform aggressive cleanup of storage backends if it was a broad --all
-		// or if we specified storage types but NO prefixes.
-		unqualified := len(c.Names) == 0
-		if unqualified {
-			// If --disk was specified, only cleanup disk. If --ram, only ram. If neither, both.
-			cleanupDisk := c.Disk || (!c.Disk && !c.RAM)
-			cleanupRAM := c.RAM || (!c.Disk && !c.RAM)
-			if cleanupErr := cleanupAggressive(
-				ctx,
-				globals.StateDir,
-				globals.System,
-				cleanupDisk,
-				cleanupRAM,
-				nil,
-			); cleanupErr != nil {
-				if nginxErr != nil {
-					return errors.Join(nginxErr, cleanupErr)
-				}
-				return cleanupErr
-			}
-			return nginxErr
-		}
+	return cleanupAggressive(ctx, opts)
+}
 
-		// If prefixes WERE provided, we can still do a "partial" aggressive cleanup
-		// like terminating machines with that prefix.
-		if cleanupErr := cleanupAggressive(
-			ctx,
-			globals.StateDir,
-			globals.System,
-			false,
-			false,
-			c.Names,
-		); cleanupErr != nil {
-			if nginxErr != nil {
-				return errors.Join(nginxErr, cleanupErr)
-			}
-			return cleanupErr
-		}
+func (c *DeleteCmd) aggressiveCleanupOptions(globals *GlobalOptions) (aggressiveCleanupOptions, bool) {
+	if !c.All {
+		return aggressiveCleanupOptions{}, false
 	}
 
-	return nginxErr
+	if len(c.Names) > 0 {
+		return aggressiveCleanupOptions{
+			stateDir: globals.StateDir,
+			system:   globals.System,
+			prefixes: c.Names,
+		}, true
+	}
+
+	return aggressiveCleanupOptions{
+		stateDir: globals.StateDir,
+		system:   globals.System,
+		disk:     c.Disk || (!c.Disk && !c.RAM),
+		ram:      c.RAM || (!c.Disk && !c.RAM),
+	}, true
 }
 
 func deleteDemo(ctx context.Context, globals *GlobalOptions, name string) error {

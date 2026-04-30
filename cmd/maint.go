@@ -68,61 +68,62 @@ func (c *CleanupCmd) Run(ctx context.Context, globals *GlobalOptions) error {
 	return nil
 }
 
+type aggressiveCleanupOptions struct {
+	stateDir string
+	system   *config.System
+	disk     bool
+	ram      bool
+	prefixes []string
+}
+
 // cleanupAggressive unmounts specified iiab storage and deletes the backing btrfs files.
 // It refuses to run if any demo is currently running (optionally filtered by prefix).
-func cleanupAggressive(
-	ctx context.Context,
-	stateDir string,
-	sys *config.System,
-	disk, ram bool,
-	prefixes []string,
-) error {
-	slog.InfoContext(ctx, "Performing aggressive cleanup...", "disk", disk, "ram", ram, "prefixes", prefixes)
+func cleanupAggressive(ctx context.Context, opts aggressiveCleanupOptions) error {
+	slog.InfoContext(
+		ctx,
+		"Performing aggressive cleanup...",
+		"disk",
+		opts.disk,
+		"ram",
+		opts.ram,
+		"prefixes",
+		opts.prefixes,
+	)
 
 	// Refuse if any demo is running (respecting prefixes)
-	names, err := config.List(stateDir)
+	names, err := config.List(opts.stateDir)
 	if err != nil {
 		return fmt.Errorf("cannot list demos: %w", err)
 	}
 	for _, name := range names {
-		match := false
-		if len(prefixes) == 0 {
-			match = true
-		} else {
-			for _, p := range prefixes {
-				if strings.HasPrefix(name, p) {
-					match = true
-					break
-				}
-			}
+		if !matchesAnyPrefix(name, opts.prefixes) {
+			continue
 		}
 
-		if match {
-			status, _ := config.GetDemoStatus(stateDir, name)
-			if status == "running" {
-				return fmt.Errorf(
-					"cannot perform aggressive cleanup: demo '%s' is running (stop all matching demos first)",
-					name,
-				)
-			}
+		status, _ := config.GetDemoStatus(opts.stateDir, name)
+		if status == "running" {
+			return fmt.Errorf(
+				"cannot perform aggressive cleanup: demo '%s' is running (stop all matching demos first)",
+				name,
+			)
 		}
 	}
 
-	terminateAllMachines(ctx, prefixes)
+	terminateAllMachines(ctx, opts.prefixes)
 
-	if disk || ram {
-		unmountAllStorage(ctx, disk, ram)
-		detachAllLoopDevices(ctx, disk, ram)
+	if opts.disk || opts.ram {
+		unmountAllStorage(ctx, opts.disk, opts.ram)
+		detachAllLoopDevices(ctx, opts.disk, opts.ram)
 	}
 
 	// Only remove host-wide resources on a full cleanup of all storage backends.
-	if len(prefixes) == 0 && disk && ram {
+	if len(opts.prefixes) == 0 && opts.disk && opts.ram {
 		removeBridge(ctx)
 	}
 
-	cleanOrphanedMachineSymlinks(sys, prefixes)
+	cleanOrphanedMachineSymlinks(opts.system, opts.prefixes)
 
-	if len(prefixes) == 0 {
+	if len(opts.prefixes) == 0 {
 		cleanupEmptyDirs()
 	}
 
@@ -142,28 +143,19 @@ func terminateAllMachines(ctx context.Context, prefixes []string) {
 
 	for line := range strings.SplitSeq(string(out), "\n") {
 		fields := strings.Fields(line)
-		if len(fields) > 0 {
-			name := fields[0]
-
-			match := false
-			if len(prefixes) == 0 {
-				match = true
-			} else {
-				for _, p := range prefixes {
-					if strings.HasPrefix(name, p) {
-						match = true
-						break
-					}
-				}
-			}
-
-			if match {
-				slog.InfoContext(ctx, "Terminating machine for aggressive cleanup", "name", name)
-				tctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-				_ = exec.CommandContext(tctx, "machinectl", "terminate", name).Run()
-				cancel()
-			}
+		if len(fields) == 0 {
+			continue
 		}
+
+		name := fields[0]
+		if !matchesAnyPrefix(name, prefixes) {
+			continue
+		}
+
+		slog.InfoContext(ctx, "Terminating machine for aggressive cleanup", "name", name)
+		tctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		_ = exec.CommandContext(tctx, "machinectl", "terminate", name).Run()
+		cancel()
 	}
 }
 
@@ -241,19 +233,7 @@ func cleanOrphanedMachineSymlinks(sys *config.System, prefixes []string) {
 	}
 	for _, e := range entries {
 		name := e.Name()
-		match := false
-		if len(prefixes) == 0 {
-			match = true
-		} else {
-			for _, p := range prefixes {
-				if strings.HasPrefix(name, p) {
-					match = true
-					break
-				}
-			}
-		}
-
-		if !match {
+		if !matchesAnyPrefix(name, prefixes) {
 			continue
 		}
 
@@ -318,6 +298,7 @@ func cleanupOrphanedMachines(ctx context.Context, globals *GlobalOptions, dryRun
 		activeSet[n] = true
 	}
 
+	var cleanedNames []string
 	lines := strings.SplitSeq(string(out), "\n")
 	for line := range lines {
 		fields := strings.Fields(line)
@@ -339,6 +320,11 @@ func cleanupOrphanedMachines(ctx context.Context, globals *GlobalOptions, dryRun
 		if err := storage.CleanupResources(ctx, name, name, globals.System); err != nil {
 			slog.WarnContext(ctx, "Failed to cleanup orphaned machine resources", "name", name, "error", err)
 		}
+		cleanedNames = append(cleanedNames, name)
+	}
+
+	if err := storage.FlushStaleMachineRegistrations(ctx, cleanedNames); err != nil {
+		slog.WarnContext(ctx, "Failed to flush stale machine registrations", "error", err)
 	}
 }
 

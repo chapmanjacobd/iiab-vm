@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/chapmanjacobd/iiab-vm/v2/internal/config"
@@ -23,9 +25,10 @@ func CleanupResources(ctx context.Context, name, subdomain string, sys *config.S
 	var errs []error
 
 	// Force-terminate nspawn machine
-	if err := exec.CommandContext(ctx, "machinectl", "terminate", name).Run(); err != nil {
-		slog.WarnContext(ctx, "Failed to terminate machine", "name", name, "error", err)
-		errs = append(errs, fmt.Errorf("machinectl terminate: %w", err))
+	terminateMachineBestEffort(ctx, name)
+
+	if err := cleanupMachineUnits(ctx, name); err != nil {
+		errs = append(errs, err)
 	}
 
 	// Clean up veth interfaces (use sanitized subdomain since that's what was used to create them)
@@ -63,6 +66,199 @@ func CleanupResources(ctx context.Context, name, subdomain string, sys *config.S
 		slog.WarnContext(ctx, "Failed to remove service override", "name", name, "error", err)
 		errs = append(errs, fmt.Errorf("remove service override: %w", err))
 	}
+
+	if err := daemonReloadSystemd(ctx); err != nil {
+		errs = append(errs, err)
+	}
+
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+	return nil
+}
+
+func terminateMachineBestEffort(ctx context.Context, name string) {
+	out, err := exec.CommandContext(ctx, "machinectl", "terminate", name).CombinedOutput()
+	if err == nil {
+		return
+	}
+
+	slog.WarnContext(
+		ctx,
+		"Failed to terminate machine",
+		"name",
+		name,
+		"error",
+		err,
+		"output",
+		strings.TrimSpace(string(out)),
+	)
+}
+
+func cleanupMachineUnits(ctx context.Context, name string) error {
+	serviceName := fmt.Sprintf("systemd-nspawn@%s.service", name)
+	var errs []error
+
+	if machineUnit := machinectlProperty(ctx, name, "Unit"); machineUnit != "" && machineUnit != serviceName {
+		if err := cleanupMachineUnit(ctx, name, machineUnit); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	if err := runSystemctlUnitCommand(ctx, "disable", "--now", serviceName); err != nil {
+		slog.WarnContext(ctx, "Failed to disable nspawn service", "name", name, "error", err)
+		errs = append(errs, fmt.Errorf("systemctl disable --now %s: %w", serviceName, err))
+	}
+
+	if err := runSystemctlUnitCommand(ctx, "reset-failed", serviceName); err != nil {
+		slog.WarnContext(ctx, "Failed to reset nspawn service state", "name", name, "error", err)
+		errs = append(errs, fmt.Errorf("systemctl reset-failed %s: %w", serviceName, err))
+	}
+
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+	return nil
+}
+
+func cleanupMachineUnit(ctx context.Context, name, unit string) error {
+	var errs []error
+
+	if err := runSystemctlUnitCommand(ctx, "stop", unit); err != nil {
+		slog.WarnContext(ctx, "Failed to stop machine unit", "name", name, "unit", unit, "error", err)
+		errs = append(errs, fmt.Errorf("systemctl stop %s: %w", unit, err))
+	}
+
+	if err := runSystemctlUnitCommand(ctx, "reset-failed", unit); err != nil {
+		slog.WarnContext(ctx, "Failed to reset machine unit state", "name", name, "unit", unit, "error", err)
+		errs = append(errs, fmt.Errorf("systemctl reset-failed %s: %w", unit, err))
+	}
+
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+	return nil
+}
+
+func daemonReloadSystemd(ctx context.Context) error {
+	out, err := exec.CommandContext(ctx, "systemctl", "daemon-reload").CombinedOutput()
+	if err == nil {
+		return nil
+	}
+
+	trimmed := strings.TrimSpace(string(out))
+	if trimmed == "" {
+		return fmt.Errorf("%w", err)
+	}
+	return fmt.Errorf("%w: %s", err, trimmed)
+}
+
+func runSystemctlUnitCommand(ctx context.Context, args ...string) error {
+	out, err := exec.CommandContext(ctx, "systemctl", args...).CombinedOutput()
+	if err == nil {
+		return nil
+	}
+
+	if isMissingSystemdUnitError(err, out) {
+		return nil
+	}
+
+	trimmed := strings.TrimSpace(string(out))
+	if trimmed == "" {
+		return fmt.Errorf("%w", err)
+	}
+	return fmt.Errorf("%w: %s", err, trimmed)
+}
+
+func isMissingSystemdUnitError(err error, out []byte) bool {
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 5 {
+		return true
+	}
+
+	msg := strings.TrimSpace(string(out))
+	return strings.Contains(msg, "not loaded")
+}
+
+func machinectlProperty(ctx context.Context, name, property string) string {
+	out, err := exec.CommandContext(ctx, "machinectl", "show", name, "--property="+property).CombinedOutput()
+	if err != nil {
+		return ""
+	}
+
+	for line := range strings.SplitSeq(string(out), "\n") {
+		key, value, ok := strings.Cut(line, "=")
+		if ok && key == property {
+			return strings.TrimSpace(value)
+		}
+	}
+
+	return ""
+}
+
+func FlushStaleMachineRegistrations(ctx context.Context, names []string) error {
+	names = uniqueNames(names)
+	staleNames := knownMachineNames(ctx, names)
+	if len(staleNames) == 0 {
+		return nil
+	}
+
+	var errs []error
+	for _, name := range staleNames {
+		if err := removeMachineRuntimeRegistration(name); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	out, err := exec.CommandContext(ctx, "systemctl", "restart", "systemd-machined").CombinedOutput()
+	if err != nil {
+		trimmed := strings.TrimSpace(string(out))
+		if trimmed == "" {
+			errs = append(errs, fmt.Errorf("restart systemd-machined: %w", err))
+		} else {
+			errs = append(errs, fmt.Errorf("restart systemd-machined: %w: %s", err, trimmed))
+		}
+	}
+
+	if len(knownMachineNames(ctx, staleNames)) > 0 {
+		errs = append(errs, errors.New("stale machine registrations remain after systemd-machined restart"))
+	}
+
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+	return nil
+}
+
+func uniqueNames(names []string) []string {
+	var uniq []string
+	for _, name := range names {
+		if name == "" || slices.Contains(uniq, name) {
+			continue
+		}
+		uniq = append(uniq, name)
+	}
+	return uniq
+}
+
+func knownMachineNames(ctx context.Context, names []string) []string {
+	var known []string
+	for _, name := range names {
+		if machinectlProperty(ctx, name, "Unit") != "" {
+			known = append(known, name)
+		}
+	}
+	return known
+}
+
+func removeMachineRuntimeRegistration(name string) error {
+	var errs []error
+
+	if err := os.Remove(filepath.Join("/run/systemd/machines", name)); err != nil && !os.IsNotExist(err) {
+		errs = append(errs, fmt.Errorf("remove machine runtime registration %s: %w", name, err))
+	}
+
+	_ = os.RemoveAll(filepath.Join("/run/systemd/nspawn/unix-export", name))
 
 	if len(errs) > 0 {
 		return errors.Join(errs...)
