@@ -34,7 +34,7 @@ The `iiab-vm` tool is the primary interface for managing demos.
 | `settle [timeout]`          | Wait until all demos reach a settled state     |
 | `logs <name>`               | Show build log or container journal            |
 | `shell <name>`              | Open a shell in a running container            |
-| `cleanup [--all]`           | Clean up failed builds and orphaned subvolumes |
+| `cleanup`                   | Clean up failed builds and orphaned resources  |
 | `rebuild <name ... [--all]` | Delete and re-build demo(s)                    |
 | `reload`                    | Regenerate nginx config from active demos      |
 | `reconcile`                 | Fix resource counter drift and check ghost IPs |
@@ -113,6 +113,6 @@ sudo iiab-vm shell <name>          # Check inside container
 sudo systemd-nspawn -q -D /run/iiab-demos/storage/builds/<name> --boot
 
 # Clean up when done
-sudo iiab-vm cleanup --all         # Remove all failed demos and orphaned subvolumes
+sudo iiab-vm cleanup               # Remove failed demos and orphaned resources
 sudo iiab-vm cleanup --dry-run     # Preview what would be cleaned up
 ```

@@ -70,7 +70,7 @@ type CLI struct {
 
 	Init      InitCmd      `help:"Initialize host for IIAB demos"                 cmd:""`
 	Build     BuildCmd     `help:"Build a new demo"                               cmd:""`
-	Delete    DeleteCmd    `help:"Stop and delete demo(s)"                        cmd:""`
+	Delete    DeleteCmd    `help:"Stop and delete demo(s); --all also resets shared host storage" cmd:""`
 	List      ListCmd      `help:"Show all demos and resource usage"              cmd:""`
 	Status    StatusCmd    `help:"Detailed status of a demo"                      cmd:""`
 	Start     StartCmd     `help:"Start stopped demo(s)"                          cmd:""`
@@ -79,7 +79,7 @@ type CLI struct {
 	Settle    SettleCmd    `help:"Wait until all demos reach a settled state"     cmd:""`
 	Logs      LogsCmd      `help:"Show build log or container journal"            cmd:""`
 	Shell     ShellCmd     `help:"Open a shell in a running container"            cmd:""`
-	Cleanup   CleanupCmd   `help:"Clean up failed builds and orphaned subvolumes" cmd:""`
+	Cleanup   CleanupCmd   `help:"Clean up failed builds and orphaned resources"  cmd:""`
 	Rebuild   RebuildCmd   `help:"Delete and re-build demo(s)"                    cmd:""`
 	Reload    ReloadCmd    `help:"Regenerate nginx config from active demos"      cmd:""`
 	Reconcile ReconcileCmd `help:"Fix resource counter drift and check ghost IPs" cmd:""`

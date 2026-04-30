@@ -146,5 +146,5 @@ reconcile: build
 	sudo ./$(BINARY) reconcile
 
 uninstall: build
-	sudo ./$(BINARY) cleanup --all
+	sudo ./$(BINARY) delete --all
 	sudo rm -f ./$(BINARY)

@@ -16,7 +16,7 @@ func TestCrossStorageCopy(t *testing.T) {
 	diskDemo := uniqueDemoName("disk-derived")
 
 	// Ensure clean slate for storage
-	_, stderr, err := runIIABVM(t, stateDir, "cleanup", "--all")
+	_, stderr, err := runIIABVM(t, stateDir, "delete", "--all")
 	if err != nil {
 		t.Fatalf("initial cleanup failed: %s", stderr)
 	}

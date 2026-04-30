@@ -18,13 +18,21 @@ import (
 // DeleteCmd stops and deletes demo(s).
 type DeleteCmd struct {
 	Names []string `help:"Demo name(s) to delete" arg:"" optional:""`
-	All   bool     `help:"Delete all demos"                          default:"false"`
+	All   bool     `help:"Delete all demos and reset shared host storage" default:"false"`
 }
 
 // Run executes the delete command.
 func (c *DeleteCmd) Run(ctx context.Context, globals *GlobalOptions) error {
 	if err := ensureRoot(); err != nil {
 		return err
+	}
+
+	if c.All {
+		lk, err := acquireLongLock(ctx, globals)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = lk.Release() }()
 	}
 
 	names := c.Names
@@ -36,17 +44,28 @@ func (c *DeleteCmd) Run(ctx context.Context, globals *GlobalOptions) error {
 		}
 	}
 
-	if len(names) == 0 {
+	if len(names) == 0 && !c.All {
 		return errors.New("no demos specified. Use demo name(s) or --all")
 	}
 
+	var deleteErrs []error
 	for _, name := range names {
 		if err := deleteDemo(ctx, globals, name); err != nil {
 			slog.ErrorContext(ctx, "Delete failed", "demo", name, "error", err)
+			deleteErrs = append(deleteErrs, fmt.Errorf("delete %s: %w", name, err))
 		} else {
 			slog.InfoContext(ctx, "Deleted", "demo", name)
 		}
 	}
+
+	if len(deleteErrs) > 0 {
+		return errors.Join(deleteErrs...)
+	}
+
+	if c.All {
+		return cleanupAggressive(ctx, globals.StateDir, globals.System)
+	}
+
 	return nil
 }
 

@@ -18,10 +18,9 @@ import (
 	"github.com/chapmanjacobd/iiab-vm/v2/internal/sys"
 )
 
-// CleanupCmd cleans up failed builds and orphaned subvolumes.
+// CleanupCmd cleans up failed builds and orphaned resources.
 type CleanupCmd struct {
-	All    bool `help:"Clean up all failed builds and orphans" default:"false"`
-	DryRun bool `help:"Preview what would be cleaned up"       default:"false" name:"dry-run"`
+	DryRun bool `help:"Preview what would be cleaned up" default:"false" name:"dry-run"`
 }
 
 // Run executes the cleanup command.
@@ -65,16 +64,6 @@ func (c *CleanupCmd) Run(ctx context.Context, globals *GlobalOptions) error {
 
 	// Clean orphaned machines in machined
 	cleanupOrphanedMachines(ctx, globals, c.DryRun)
-
-	if c.All {
-		if c.DryRun {
-			slog.InfoContext(ctx, "Would perform aggressive cleanup (unmount and delete storage files)")
-		} else {
-			if err := cleanupAggressive(ctx, globals.StateDir, globals.System); err != nil {
-				return err
-			}
-		}
-	}
 
 	return nil
 }
