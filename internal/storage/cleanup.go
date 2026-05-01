@@ -16,6 +16,12 @@ import (
 	"github.com/chapmanjacobd/iiab-vm/v2/internal/config"
 )
 
+type loopDeviceAttachment struct {
+	device      string
+	backingFile string
+	deleted     bool
+}
+
 // CleanupResources removes container, veth, and subvolume resources.
 // Returns a combined error if any cleanup step fails.
 func CleanupResources(ctx context.Context, name, subdomain string, sys *config.System) error {
@@ -264,4 +270,121 @@ func removeMachineRuntimeRegistration(name string) error {
 		return errors.Join(errs...)
 	}
 	return nil
+}
+
+func DetachStaleLoopDevices(ctx context.Context, disk, ram bool) error {
+	attachments, err := listLoopDeviceAttachments(ctx)
+	if err != nil {
+		return err
+	}
+
+	var errs []error
+	for _, attachment := range staleLoopDeviceAttachments(attachments, disk, ram) {
+		slog.InfoContext(
+			ctx,
+			"Detaching stale loop device",
+			"device",
+			attachment.device,
+			"file",
+			attachment.backingFile,
+		)
+		if err := exec.CommandContext(ctx, "losetup", "-d", attachment.device).Run(); err != nil {
+			slog.WarnContext(
+				ctx,
+				"Failed to detach stale loop device",
+				"device",
+				attachment.device,
+				"file",
+				attachment.backingFile,
+				"error",
+				err,
+			)
+			errs = append(errs, fmt.Errorf("detach stale loop device %s: %w", attachment.device, err))
+		}
+	}
+
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+	return nil
+}
+
+func ListStaleLoopDevices(ctx context.Context, disk, ram bool) ([]string, error) {
+	attachments, err := listLoopDeviceAttachments(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	stale := staleLoopDeviceAttachments(attachments, disk, ram)
+	devices := make([]string, 0, len(stale))
+	for _, attachment := range stale {
+		devices = append(devices, attachment.device)
+	}
+	return devices, nil
+}
+
+func listLoopDeviceAttachments(ctx context.Context) ([]loopDeviceAttachment, error) {
+	out, err := exec.CommandContext(ctx, "losetup", "-a").Output()
+	if err != nil {
+		return nil, fmt.Errorf("list loop devices: %w", err)
+	}
+
+	return parseLoopDeviceAttachments(string(out)), nil
+}
+
+func parseLoopDeviceAttachments(out string) []loopDeviceAttachment {
+	var attachments []loopDeviceAttachment
+
+	for line := range strings.SplitSeq(strings.TrimSpace(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		device, remainder, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+
+		start := strings.Index(remainder, "(")
+		end := strings.LastIndex(remainder, ")")
+		if start == -1 || end == -1 || end <= start {
+			continue
+		}
+
+		backing := strings.TrimSpace(remainder[start+1 : end])
+		deleted := strings.HasSuffix(backing, " (deleted)")
+		backing = strings.TrimSuffix(backing, " (deleted)")
+
+		attachments = append(attachments, loopDeviceAttachment{
+			device:      strings.TrimSpace(device),
+			backingFile: backing,
+			deleted:     deleted,
+		})
+	}
+
+	return attachments
+}
+
+func staleLoopDeviceAttachments(attachments []loopDeviceAttachment, disk, ram bool) []loopDeviceAttachment {
+	allowed := map[string]bool{}
+	if ram {
+		allowed[RAMBtrfsFile] = true
+	}
+	if disk {
+		allowed[DiskBtrfsFile] = true
+	}
+
+	var stale []loopDeviceAttachment
+	for _, attachment := range attachments {
+		if !attachment.deleted {
+			continue
+		}
+		if !allowed[attachment.backingFile] {
+			continue
+		}
+		stale = append(stale, attachment)
+	}
+
+	return stale
 }

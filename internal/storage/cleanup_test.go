@@ -96,3 +96,55 @@ func TestUniqueNames(t *testing.T) {
 		t.Fatalf("uniqueNames() = %v, want %v", got, want)
 	}
 }
+
+func TestParseLoopDeviceAttachments(t *testing.T) {
+	t.Parallel()
+
+	out := strings.Join([]string{
+		"/dev/loop1: [0122]:12 (/run/iiab-demos/storage.btrfs (deleted))",
+		"/dev/loop4: [0037]:187682925 (/var/iiab-demos/storage.btrfs)",
+		"/dev/loop3: [0037]:187680006 (/var/iiab-demos/storage.btrfs (deleted))",
+	}, "\n")
+
+	got := parseLoopDeviceAttachments(out)
+	want := []loopDeviceAttachment{
+		{device: "/dev/loop1", backingFile: RAMBtrfsFile, deleted: true},
+		{device: "/dev/loop4", backingFile: DiskBtrfsFile, deleted: false},
+		{device: "/dev/loop3", backingFile: DiskBtrfsFile, deleted: true},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("parseLoopDeviceAttachments() = %#v, want %#v", got, want)
+	}
+}
+
+func TestStaleLoopDeviceAttachments(t *testing.T) {
+	t.Parallel()
+
+	attachments := []loopDeviceAttachment{
+		{device: "/dev/loop1", backingFile: RAMBtrfsFile, deleted: true},
+		{device: "/dev/loop4", backingFile: DiskBtrfsFile, deleted: false},
+		{device: "/dev/loop3", backingFile: DiskBtrfsFile, deleted: true},
+		{device: "/dev/loop9", backingFile: "/tmp/not-ours.img", deleted: true},
+	}
+
+	gotRAM := staleLoopDeviceAttachments(attachments, false, true)
+	wantRAM := []loopDeviceAttachment{{device: "/dev/loop1", backingFile: RAMBtrfsFile, deleted: true}}
+	if !reflect.DeepEqual(gotRAM, wantRAM) {
+		t.Fatalf("staleLoopDeviceAttachments(ram) = %#v, want %#v", gotRAM, wantRAM)
+	}
+
+	gotDisk := staleLoopDeviceAttachments(attachments, true, false)
+	wantDisk := []loopDeviceAttachment{{device: "/dev/loop3", backingFile: DiskBtrfsFile, deleted: true}}
+	if !reflect.DeepEqual(gotDisk, wantDisk) {
+		t.Fatalf("staleLoopDeviceAttachments(disk) = %#v, want %#v", gotDisk, wantDisk)
+	}
+
+	gotBoth := staleLoopDeviceAttachments(attachments, true, true)
+	wantBoth := []loopDeviceAttachment{
+		{device: "/dev/loop1", backingFile: RAMBtrfsFile, deleted: true},
+		{device: "/dev/loop3", backingFile: DiskBtrfsFile, deleted: true},
+	}
+	if !reflect.DeepEqual(gotBoth, wantBoth) {
+		t.Fatalf("staleLoopDeviceAttachments(both) = %#v, want %#v", gotBoth, wantBoth)
+	}
+}

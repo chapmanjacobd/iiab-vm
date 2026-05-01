@@ -158,17 +158,13 @@ func SetupStorage(ctx context.Context, onDisk bool) (*StorageInfo, error) {
 		return nil, err
 	}
 
-	mountOpts := "loop,noatime"
-	if onDisk {
-		mountOpts = "loop,compress-force=zstd:1,noatime,discard=async"
-	}
-	if err := command.Run(ctx, "mount", "-o", mountOpts, btrfsFile, mount); err != nil {
+	if err := mountStorageFile(ctx, btrfsFile, mount, onDisk); err != nil {
 		slog.WarnContext(ctx, "Mount failed, attempting to re-format", "file", btrfsFile, "error", err)
 		// Force re-format
 		if err := command.Run(ctx, "mkfs.btrfs", "-f", btrfsFile); err != nil {
 			return nil, err
 		}
-		if err := command.Run(ctx, "mount", "-o", mountOpts, btrfsFile, mount); err != nil {
+		if err := mountStorageFile(ctx, btrfsFile, mount, onDisk); err != nil {
 			return nil, err
 		}
 	}
@@ -325,7 +321,7 @@ func CopySubvolumeFromAlternate(ctx context.Context, subvolName, altStorage, alt
 		if err := os.MkdirAll(altMount, 0o755); err != nil {
 			return fmt.Errorf("cannot create alternate mount point: %w", err)
 		}
-		if err := command.Run(ctx, "mount", "-o", "loop,noatime", altStorage, altMount); err != nil {
+		if err := mountStorageFile(ctx, altStorage, altMount, altStorage == DiskBtrfsFile); err != nil {
 			return fmt.Errorf("cannot mount alternate storage: %w", err)
 		}
 	}
@@ -473,6 +469,32 @@ func getBtrfsUsedMB(ctx context.Context, mount string) int {
 		}
 	}
 	return 0
+}
+
+func mountStorageFile(ctx context.Context, btrfsFile, mount string, onDisk bool) error {
+	loopDev, err := ensureLoopDevice(ctx, btrfsFile)
+	if err != nil {
+		return err
+	}
+
+	mountOpts := "noatime"
+	if onDisk {
+		mountOpts = "compress-force=zstd:1,noatime,discard=async"
+	}
+	return command.Run(ctx, "mount", "-o", mountOpts, loopDev, mount)
+}
+
+func ensureLoopDevice(ctx context.Context, btrfsFile string) (string, error) {
+	out, err := command.Output(ctx, "losetup", "--find", "--show", "--nooverlap", btrfsFile)
+	if err != nil {
+		return "", fmt.Errorf("failed to attach loop device for %s: %w", btrfsFile, err)
+	}
+
+	loopDev := strings.TrimSpace(out)
+	if loopDev == "" {
+		return "", fmt.Errorf("no loop device returned for %s", btrfsFile)
+	}
+	return loopDev, nil
 }
 
 // ParseSizeToMB parses a size string like "10GiB", "512MiB", "1048576B", or "1024" to MB.

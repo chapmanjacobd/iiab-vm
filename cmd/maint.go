@@ -65,6 +65,9 @@ func (c *CleanupCmd) Run(ctx context.Context, globals *GlobalOptions) error {
 	// Clean orphaned machines in machined
 	cleanupOrphanedMachines(ctx, globals, c.DryRun)
 
+	// Clean orphaned stale loop devices for iiab storage files
+	cleanupOrphanedLoopDevices(ctx, c.DryRun)
+
 	return nil
 }
 
@@ -215,6 +218,10 @@ func detachAllLoopDevices(ctx context.Context, disk, ram bool) {
 			}
 		}
 	}
+
+	if err := storage.DetachStaleLoopDevices(ctx, disk, ram); err != nil {
+		slog.WarnContext(ctx, "Failed to detach stale loop devices", "error", err)
+	}
 }
 
 func removeBridge(ctx context.Context) {
@@ -325,6 +332,25 @@ func cleanupOrphanedMachines(ctx context.Context, globals *GlobalOptions, dryRun
 
 	if err := storage.FlushStaleMachineRegistrations(ctx, cleanedNames); err != nil {
 		slog.WarnContext(ctx, "Failed to flush stale machine registrations", "error", err)
+	}
+}
+
+func cleanupOrphanedLoopDevices(ctx context.Context, dryRun bool) {
+	staleDevices, err := storage.ListStaleLoopDevices(ctx, true, true)
+	if err != nil {
+		slog.WarnContext(ctx, "Failed to list stale loop devices", "error", err)
+		return
+	}
+
+	if dryRun {
+		for _, device := range staleDevices {
+			slog.InfoContext(ctx, "Would detach stale loop device", "device", device)
+		}
+		return
+	}
+
+	if err := storage.DetachStaleLoopDevices(ctx, true, true); err != nil {
+		slog.WarnContext(ctx, "Failed to detach stale loop devices", "error", err)
 	}
 }
 
