@@ -1,3 +1,4 @@
+//nolint:testpackage // These tests exercise unexported image-selection helpers.
 package build
 
 import (

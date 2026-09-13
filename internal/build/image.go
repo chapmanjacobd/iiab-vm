@@ -209,25 +209,24 @@ func isUbuntuBase(baseName string) bool {
 	return strings.Contains(strings.ToLower(baseName), "ubuntu")
 }
 
-// ubuntuCodenames maps Ubuntu base subvolume names to their cloud-image
-// codenames (used to derive the rootfs tarball URL).
-var ubuntuCodenames = map[string]string{
-	"ubuntu26.04": "resolute",
-	"ubuntu26.10": "stonking",
-}
-
 // ubuntuTarURL returns the cloud-image rootfs tarball URL for the given Ubuntu
 // base subvolume name (e.g. "ubuntu26.04" or "ubuntu26.10"). Unknown names fall
 // back to the default 26.04 (resolute) URL.
 func ubuntuTarURL(baseSubvol string) string {
-	if codename, ok := ubuntuCodenames[baseSubvol]; ok {
-		return fmt.Sprintf(
-			"https://cloud-images.ubuntu.com/%s/current/%s-server-cloudimg-amd64-root.tar.xz",
-			codename,
-			codename,
-		)
+	var codename string
+	switch baseSubvol {
+	case "ubuntu26.04":
+		codename = "resolute"
+	case "ubuntu26.10":
+		codename = "stonking"
+	default:
+		return UbuntuTarURL
 	}
-	return UbuntuTarURL
+	return fmt.Sprintf(
+		"https://cloud-images.ubuntu.com/%s/current/%s-server-cloudimg-amd64-root.tar.xz",
+		codename,
+		codename,
+	)
 }
 
 // isDownloadableBase checks if the base name is a known downloadable base.

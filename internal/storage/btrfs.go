@@ -179,7 +179,8 @@ func GrowStorage(ctx context.Context, onDisk bool, neededMB int) error {
 		// Calculate total target size including overhead
 		btrfsUsed := getBtrfsUsedMB(ctx, RAMMount)
 		targetMB := max(
-			(btrfsUsed + neededMB + StorageHeadroomMB + StorageRoundUpMB), InitialSizeGB*1024)
+			(btrfsUsed + neededMB + StorageHeadroomMB + StorageRoundUpMB), InitialSizeGB*1024,
+		)
 
 		if err := ensureRAMFS(ctx, targetMB); err != nil {
 			return fmt.Errorf("cannot resize ramfs: %w", err)
@@ -202,7 +203,8 @@ func GrowStorage(ctx context.Context, onDisk bool, neededMB int) error {
 	btrfsUsed := getBtrfsUsedMB(ctx, mount)
 	targetGB := max(
 		// headroom, round up
-		(btrfsUsed+neededMB+StorageHeadroomMB+StorageRoundUpMB)/1024, StorageMinGB)
+		(btrfsUsed+neededMB+StorageHeadroomMB+StorageRoundUpMB)/1024, StorageMinGB,
+	)
 
 	if targetGB <= currentGB {
 		slog.InfoContext(ctx, "Storage sufficient", "current_gb", currentGB, "needed_mb", neededMB)
@@ -226,7 +228,7 @@ func GrowStorage(ctx context.Context, onDisk bool, neededMB int) error {
 	if line == "" {
 		return fmt.Errorf("no loop device found for %s", btrfsFile)
 	}
-	loopDev := strings.Split(line, ":")[0]
+	loopDev, _, _ := strings.Cut(line, ":")
 
 	slog.DebugContext(ctx, "Updating loop device capacity", "dev", loopDev)
 	if err := command.Run(ctx, "losetup", "-c", loopDev); err != nil {

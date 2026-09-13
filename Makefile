@@ -67,7 +67,7 @@ lint:
 	golangci-lint run --fix ./...
 
 deps:
-	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
 	go install gotest.tools/gotestsum@latest
 
 # Runtime targets
