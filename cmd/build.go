@@ -36,7 +36,7 @@ type BuildCmd struct {
 	Volatile    string `help:"Volatile mode (no, overlay, state, yes)"                                         default:"overlay"`
 	Start       bool   `help:"Start the demo after build succeeds"                                             default:"false"`
 	Cleanup     bool   `help:"Delete failed build snapshots immediately on failure"                            default:"false"`
-	Base        string `help:"Build on top of an existing base subvolume (e.g., debian13, ubuntu26.04)"        default:""`
+	Base        string `help:"Build on top of an existing base subvolume (e.g., debian13, ubuntu26.04, ubuntu26.10)" default:""`
 	Wildcard    bool   `help:"Use as wildcard for unknown subdomains"                                          default:"false"`
 	Disk        bool   `help:"Build on disk instead of tmpfs"                                                  default:"false"`
 	SkipInstall bool   `help:"Skip the IIAB installer (useful for base image creation or testing)"             default:"false"`

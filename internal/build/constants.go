@@ -8,7 +8,8 @@ import (
 
 const (
 	DebianTarURL = "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.tar.xz"
-	// UbuntuTarURL is the URL for the Ubuntu 26.04 (resolute) daily rootfs tarball.
+	// UbuntuTarURL is the fallback URL (Ubuntu 26.04 "resolute") used when no
+	// codename mapping exists for the requested base subvolume name.
 	UbuntuTarURL = "https://cloud-images.ubuntu.com/resolute/current/resolute-server-cloudimg-amd64-root.tar.xz"
 	IIABRepo     = "https://github.com/iiab/iiab.git"
 

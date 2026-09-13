@@ -209,6 +209,27 @@ func isUbuntuBase(baseName string) bool {
 	return strings.Contains(strings.ToLower(baseName), "ubuntu")
 }
 
+// ubuntuCodenames maps Ubuntu base subvolume names to their cloud-image
+// codenames (used to derive the rootfs tarball URL).
+var ubuntuCodenames = map[string]string{
+	"ubuntu26.04": "resolute",
+	"ubuntu26.10": "stonking",
+}
+
+// ubuntuTarURL returns the cloud-image rootfs tarball URL for the given Ubuntu
+// base subvolume name (e.g. "ubuntu26.04" or "ubuntu26.10"). Unknown names fall
+// back to the default 26.04 (resolute) URL.
+func ubuntuTarURL(baseSubvol string) string {
+	if codename, ok := ubuntuCodenames[baseSubvol]; ok {
+		return fmt.Sprintf(
+			"https://cloud-images.ubuntu.com/%s/current/%s-server-cloudimg-amd64-root.tar.xz",
+			codename,
+			codename,
+		)
+	}
+	return UbuntuTarURL
+}
+
 // isDownloadableBase checks if the base name is a known downloadable base.
 func isDownloadableBase(baseName string) bool {
 	return isUbuntuBase(baseName) || baseName == "base-debian" || strings.Contains(strings.ToLower(baseName), "debian")
@@ -292,7 +313,8 @@ func downloadAndExtractUbuntu(ctx context.Context, info *storage.StorageInfo, ba
 
 	// Download tarball
 	tarFile := filepath.Join(tmpdir, "ubuntu-root.tar.xz")
-	if err := command.Run(ctx, "curl", "-fL", "-o", tarFile, UbuntuTarURL); err != nil {
+	slog.InfoContext(ctx, "Downloading Ubuntu rootfs", "url", ubuntuTarURL(baseSubvol))
+	if err := command.Run(ctx, "curl", "-fL", "-o", tarFile, ubuntuTarURL(baseSubvol)); err != nil {
 		return fmt.Errorf("cannot download Ubuntu rootfs: %w", err)
 	}
 

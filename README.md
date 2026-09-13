@@ -51,7 +51,7 @@ The `iiab-vm` tool is the primary interface for managing demos.
 | `--fg`          | _(off)_                     | Build in foreground instead of background.           |
 | `--start`       | _(off)_                     | Start the demo after build succeeds.                 |
 | `--cleanup`     | _(off)_                     | Delete failed build snapshots immediately on failure |
-| `--base`        | _(none)_                    | Build on top of an existing base subvolume.          |
+| `--base`        | _(none)_                    | Build on top of an existing base subvolume (e.g., `debian13`, `ubuntu26.04`, `ubuntu26.10`). |
 | `--wildcard`    | _(off)_                     | Use as wildcard for unknown subdomains.              |
 
 ## Technical Architecture
