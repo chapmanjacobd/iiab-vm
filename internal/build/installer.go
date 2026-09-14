@@ -24,6 +24,10 @@ var (
 // Timeout used for individual expect operations.
 const stepTimeout = 7200 * time.Second
 
+// Timeout for a container to power off after a failed install, before nspawn
+// is forcibly killed.
+const poweroffTimeout = 120 * time.Second
+
 // runIIABInstaller runs the IIAB installer inside the container using a buffered
 // PTY expect loop for automated interaction with systemd-nspawn.
 func runIIABInstaller(buildCtx context.Context, buildSubvol string, cfg Config) error {
@@ -72,10 +76,35 @@ func runIIABInstaller(buildCtx context.Context, buildSubvol string, cfg Config) 
 // runNspawnWithPTY starts systemd-nspawn and automates the installation via a
 // buffered PTY expect loop (single read goroutine, pattern-scan-once-per-check).
 func runNspawnWithPTY(buildCtx context.Context, name, buildSubvol string, cfg Config) error {
+	// A fresh boot can sporadically fail (observed after a previously-killed
+	// nspawn for the same machine name): nspawn exits before the container's
+	// login prompt ever appears. A second boot of the same subvolume always
+	// succeeds, so retry once when the machine never reached the login prompt.
+	sawLogin, err := bootAndAutomate(buildCtx, name, buildSubvol, cfg)
+	if err == nil {
+		return nil
+	}
+	if sawLogin {
+		// The container booted; this is a genuine install failure, don't retry.
+		return err
+	}
+	slog.WarnContext(buildCtx, "Boot failed before login prompt; retrying once", "error", err)
+	if _, err := bootAndAutomate(buildCtx, name, buildSubvol, cfg); err != nil {
+		return err
+	}
+	return nil
+}
+
+// bootAndAutomate boots the build subvolume with systemd-nspawn and runs the
+// interactive expect automation. It reports whether the container reached its
+// login prompt. On automation errors after boot, the container is powered off
+// so that the nspawn process exits promptly instead of hanging until context
+// timeout.
+func bootAndAutomate(buildCtx context.Context, name, buildSubvol string, cfg Config) (sawLogin bool, retErr error) {
 	// Create the buffered PTY loop
 	el, err := NewPTYLoop(PTYLoopConfig{Stdout: cfg.Stdout})
 	if err != nil {
-		return fmt.Errorf("failed to create pty loop: %w", err)
+		return false, fmt.Errorf("failed to create pty loop: %w", err)
 	}
 	defer el.Close()
 
@@ -90,16 +119,25 @@ func runNspawnWithPTY(buildCtx context.Context, name, buildSubvol string, cfg Co
 		"--boot",
 	)
 	if err := el.StartCommand(cmd); err != nil {
-		return fmt.Errorf("failed to start nspawn: %w", err)
+		return false, fmt.Errorf("failed to start nspawn: %w", err)
 	}
 
 	// Run the expect automation in a goroutine, report errors via channel
 	errCh := make(chan error, 1)
 	go func() {
 		defer close(errCh)
-		if err := runExpectAutomation(buildCtx, el, buildSubvol, cfg); err != nil {
-			errCh <- err
+		var err error
+		sawLogin, err = runExpectAutomation(buildCtx, el, buildSubvol, cfg)
+		if err != nil && sawLogin {
+			// The container booted but installation failed. Power it off so
+			// nspawn exits promptly rather than hanging until context timeout.
+			slog.WarnContext(buildCtx, "Install automation error; powering off container", "error", err)
+			_ = el.SendLine("systemctl poweroff 2>/dev/null || poweroff -f 2>/dev/null")
+			_ = el.WaitEOF(poweroffTimeout)
+			_ = cmd.Process.Kill()
+			_ = el.WaitEOF(poweroffTimeout)
 		}
+		errCh <- err
 	}()
 
 	// Wait for process exit
@@ -113,10 +151,10 @@ func runNspawnWithPTY(buildCtx context.Context, name, buildSubvol string, cfg Co
 	slog.DebugContext(buildCtx, "expect goroutine finished", "error", expectErr)
 
 	if cmdErr != nil {
-		return fmt.Errorf("nspawn process exited with error: %w", cmdErr)
+		return sawLogin, fmt.Errorf("nspawn process exited with error: %w", cmdErr)
 	}
 	if expectErr != nil {
-		return expectErr
+		return sawLogin, expectErr
 	}
 
 	slog.InfoContext(buildCtx, "Container shutdown complete")
@@ -125,19 +163,24 @@ func runNspawnWithPTY(buildCtx context.Context, name, buildSubvol string, cfg Co
 	} else {
 		slog.InfoContext(buildCtx, "Skip-install boot complete")
 	}
-	return nil
+	return sawLogin, nil
 }
 
-// runExpectAutomation handles all the interactive expect/send logic.
-func runExpectAutomation(ctx context.Context, el *PTYLoop, buildSubvol string, cfg Config) error {
+// runExpectAutomation handles all the interactive expect/send logic. It reports
+// whether the container reached its login prompt (i.e. the boot completed).
+func runExpectAutomation(ctx context.Context, el *PTYLoop, buildSubvol string, cfg Config) (bool, error) {
 	slog.InfoContext(ctx, "Starting interactive build automation")
 
-	if err := loginAndPrepare(el, cfg.SkipInstall); err != nil {
-		return err
+	sawLogin, err := loginAndPrepare(el, cfg.SkipInstall)
+	if err != nil {
+		return sawLogin, err
 	}
 
 	if cfg.SkipInstall {
-		return finalizeBuild(ctx, el)
+		if err := finalizeBuild(ctx, el); err != nil {
+			return sawLogin, err
+		}
+		return sawLogin, nil
 	}
 
 	// Detect incremental vs fresh build from the host.
@@ -156,14 +199,14 @@ func runExpectAutomation(ctx context.Context, el *PTYLoop, buildSubvol string, c
 
 	// Run system updates one by one
 	if err := runStep(el, "apt update", "failed to run apt update"); err != nil {
-		return err
+		return sawLogin, err
 	}
 	if err := runStep(
 		el,
 		"apt dist-upgrade -y -o Dpkg::Progress-Fancy=0 -o Dpkg::Options::=\"--force-confdef\" -o Dpkg::Options::=\"--force-confold\" -qq",
 		"failed to run apt upgrade",
 	); err != nil {
-		return err
+		return sawLogin, err
 	}
 
 	var finalInstallCmd string
@@ -175,17 +218,17 @@ func runExpectAutomation(ctx context.Context, el *PTYLoop, buildSubvol string, c
 			"rm -f /etc/iiab/install-flags/iiab-complete",
 			"failed to remove complete flag",
 		); err != nil {
-			return err
+			return sawLogin, err
 		}
 		if err := runStep(
 			el,
 			"sed -i 's/STAGE=.*/STAGE=3/' /etc/iiab/iiab.env 2>/dev/null",
 			"failed to update STAGE in iiab.env",
 		); err != nil {
-			return err
+			return sawLogin, err
 		}
 		if err := runStep(el, "cd /opt/iiab/iiab", "failed to change directory to /opt/iiab/iiab"); err != nil {
-			return err
+			return sawLogin, err
 		}
 		finalInstallCmd = "./iiab-configure"
 	} else {
@@ -196,24 +239,27 @@ func runExpectAutomation(ctx context.Context, el *PTYLoop, buildSubvol string, c
 			"curl -fLo /usr/sbin/iiab https://raw.githubusercontent.com/iiab/iiab-factory/master/iiab",
 			"failed to download iiab installer",
 		); err != nil {
-			return err
+			return sawLogin, err
 		}
 		if err := runStep(
 			el,
 			"chmod 0755 /usr/sbin/iiab",
 			"failed to set execute permissions on iiab installer",
 		); err != nil {
-			return err
+			return sawLogin, err
 		}
 		finalInstallCmd = "/usr/sbin/iiab --risky"
 	}
 
 	// Run final installer command
 	if err := runStep(el, finalInstallCmd, "IIAB installation failed"); err != nil {
-		return err
+		return sawLogin, err
 	}
 
-	return finalizeBuild(ctx, el)
+	if err := finalizeBuild(ctx, el); err != nil {
+		return sawLogin, err
+	}
+	return sawLogin, nil
 }
 
 // runStep sends a command, waits for the prompt, and verifies the exit code.
@@ -245,27 +291,29 @@ func runStep(el *PTYLoop, cmd, errMsg string) error {
 	return nil
 }
 
-func loginAndPrepare(el *PTYLoop, skipInstall bool) error {
+// loginAndPrepare logs into the container and prepares the environment. It
+// reports whether the container's login prompt was reached.
+func loginAndPrepare(el *PTYLoop, skipInstall bool) (bool, error) {
 	// Wait for login prompt
 	if _, err := el.WaitForString("login: ", stepTimeout); err != nil {
-		return fmt.Errorf("timeout waiting for login prompt: %w", err)
+		return false, fmt.Errorf("timeout waiting for login prompt: %w", err)
 	}
 
 	// Login as root
 	if err := el.SendLine("root"); err != nil {
-		return fmt.Errorf("failed to send login: %w", err)
+		return true, fmt.Errorf("failed to send login: %w", err)
 	}
 
 	// Wait for root prompt
 	if _, _, err := el.WaitForAny([]*regexp.Regexp{rePrompt}, stepTimeout); err != nil {
-		return fmt.Errorf("timeout waiting for root prompt: %w", err)
+		return true, fmt.Errorf("timeout waiting for root prompt: %w", err)
 	}
 
 	// Set environment variables and install git
 	prepCmd := "export PAGER=cat SYSTEMD_PAGER=cat TERM=dumb GIT_PROGRESS_DELAY=0 GIT_TERMINAL_PROMPT=0 ANSIBLE_NOCOLOR=1 DEBIAN_FRONTEND=noninteractive && " +
 		"command -v git >/dev/null 2>&1 || { apt-get update -qq && apt-get install -y -qq git >/dev/null 2>&1; }"
 	if err := runStep(el, prepCmd, "Environment preparation failed"); err != nil {
-		return err
+		return true, err
 	}
 
 	// Silence git (ignore errors -- these are best-effort)
@@ -281,20 +329,23 @@ func loginAndPrepare(el *PTYLoop, skipInstall bool) error {
 	_ = el.AwaitPrompt(stepTimeout)
 
 	if skipInstall {
-		return nil
+		return true, nil
 	}
 
 	// Generate SSH keys
 	if err := el.SendLine("ssh-keygen -A"); err != nil {
-		return fmt.Errorf("failed to send ssh-keygen: %w", err)
+		return true, fmt.Errorf("failed to send ssh-keygen: %w", err)
 	}
 	if _, _, err := el.WaitForAny([]*regexp.Regexp{rePrompt}, stepTimeout); err != nil {
-		return fmt.Errorf("timeout after ssh-keygen: %w", err)
+		return true, fmt.Errorf("timeout after ssh-keygen: %w", err)
 	}
 
 	// Wait for and verify network readiness
 	netCmd := "for i in $(seq 1 30); do ip route | grep -q default && break; sleep 1; done; ip route | grep -q default || { echo 'ERROR: No default route' >&2; exit 1; }"
-	return runStep(el, netCmd, "Network verification failed")
+	if err := runStep(el, netCmd, "Network verification failed"); err != nil {
+		return true, err
+	}
+	return true, nil
 }
 
 func finalizeBuild(ctx context.Context, el *PTYLoop) error {
